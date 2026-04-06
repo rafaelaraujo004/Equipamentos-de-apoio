@@ -1,0 +1,307 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg:           #0b1120;
+  --bg2:          #111c30;
+  --card:         #14213d;
+  --border:       #1e3058;
+  --accent:       #1d6fff;
+  --accent-hover: #4e90ff;
+  --text:         #e8edf7;
+  --muted:        #6b7fa3;
+  --green:        #22c55e;
+  --yellow:       #eab308;
+  --red:          #ef4444;
+  --radius:       14px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 15px;
+  min-height: 100vh;
+}
+
+/* ── HEADER ─────────────────────────────────────────── */
+header {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-inner {
+  display: flex;
+  align-items: center;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.logo {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+
+/* ── LAYOUT ──────────────────────────────────────────── */
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .3);
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+/* ── CAMPOS DO CABEÇALHO ─────────────────────────────── */
+.grid-header {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .6px;
+}
+input,
+select {
+  background: #0d1729;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 10px 14px;
+  font-size: 14px;
+  width: 100%;
+  transition: border-color .2s;
+  appearance: none;
+  -webkit-appearance: none;
+}
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ── LISTA DE EQUIPAMENTOS ───────────────────────────── */
+.equip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Guindastes: card com 3 sub-linhas ──────────────── */
+.guindaste-card {
+  background: #0d1729;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color .2s;
+}
+.guindaste-card:hover { border-color: var(--accent); }
+
+.g-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.g-line .equip-name { flex: 1; }
+.g-line .equip-sub-input { flex: 1; max-width: 200px; }
+.g-line select { flex: 1; }
+
+/* Botão de status menor para operador/sinaleiro */
+.status-btn-sm {
+  width: 30px !important;
+  height: 30px !important;
+  font-size: 18px !important;
+  flex-shrink: 0;
+}
+
+/* Linha única: sem-sinaleiro [emoji] [tag] [operador] [substitui] */
+.equip-row {
+  display: grid;
+  grid-template-columns: 46px 1fr 160px 155px;
+  align-items: center;
+  gap: 10px;
+  background: #0d1729;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  transition: border-color .2s;
+}
+.equip-row:hover { border-color: var(--accent); }
+
+.equip-row.no-signaler {
+  grid-template-columns: 46px 1fr 160px 155px;
+}
+
+/* Guindauto: só status + tag */
+.equip-row.status-only {
+  grid-template-columns: 46px 1fr;
+}
+
+/* Input de substituição de tag */
+.equip-sub-input {
+  background: #0b1a30;
+  border: 1px dashed #2a4575;
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 8px 10px;
+  font-size: 12px;
+  width: 100%;
+  transition: border-color .2s, color .2s;
+}
+.equip-sub-input::placeholder { color: #2a3f62; font-style: italic; }
+.equip-sub-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  border-style: solid;
+  color: var(--text);
+}
+
+/* Botão de status (ciclo 🟢→🟡→🔴) */
+.status-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.12);
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: rgba(255,255,255,.04);
+  transition: transform .15s, border-color .2s;
+  flex-shrink: 0;
+  user-select: none;
+  padding: 0;
+}
+.status-btn:hover {
+  transform: scale(1.18);
+  border-color: rgba(255,255,255,.45);
+}
+
+.equip-name {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.equip-row select {
+  background: #101c35;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+/* ── LEGENDA ─────────────────────────────────────────── */
+.legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.legend-list span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot.green  { background: var(--green);  box-shadow: 0 0 8px var(--green); }
+.dot.yellow { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+.dot.red    { background: var(--red);    box-shadow: 0 0 8px var(--red); }
+
+/* ── BOTÕES DE AÇÃO ──────────────────────────────────── */
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.btn {
+  padding: 13px 22px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .15s, background .2s, opacity .2s;
+}
+.btn:hover { transform: translateY(-2px); }
+.btn-primary   { background: var(--accent);  color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary { background: #1e3058; color: var(--text); }
+.btn-secondary:hover { background: #2a4275; }
+.btn-whatsapp  { background: #25d366; color: #fff; }
+.btn-whatsapp:hover { background: #1fa851; }
+
+/* ── OUTPUT ──────────────────────────────────────────── */
+.output {
+  white-space: pre-wrap;
+  background: #07101f;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #c9d4f0;
+  font-family: 'Courier New', monospace;
+}
+.hidden { display: none; }
+
+/* ── RESPONSIVO ──────────────────────────────────────── */
+@media (max-width: 640px) {
+  .equip-row {
+    grid-template-columns: 42px 1fr;
+    grid-template-rows: auto auto auto;
+  }
+  .equip-row .equip-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .equip-row select {
+    grid-column: 1 / -1;
+  }
+  .equip-row.no-signaler,
+  .equip-row.status-only {
+    grid-template-columns: 42px 1fr;
+  }
+}

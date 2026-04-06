@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Status XCMG – Relatório Diário</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <span class="logo">⚙️ Status XCMG – Mina</span>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- CABEÇALHO -->
+    <section class="card">
+      <h2 class="section-title">Cabeçalho do Relatório</h2>
+      <div class="grid-header">
+        <div class="field">
+          <label for="reportDate">Data</label>
+          <input type="date" id="reportDate">
+        </div>
+        <div class="field">
+          <label for="shiftSelect">Turno</label>
+          <select id="shiftSelect">
+            <option value="A">A</option>
+            <option value="B" selected>B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="weekdaySelect">Dia da Semana</label>
+          <select id="weekdaySelect">
+            <option value="DOMINGO" selected>DOMINGO</option>
+            <option value="SEGUNDA-FEIRA">SEGUNDA-FEIRA</option>
+            <option value="TERÇA-FEIRA">TERÇA-FEIRA</option>
+            <option value="QUARTA-FEIRA">QUARTA-FEIRA</option>
+            <option value="QUINTA-FEIRA">QUINTA-FEIRA</option>
+            <option value="SEXTA-FEIRA">SEXTA-FEIRA</option>
+            <option value="SÁBADO">SÁBADO</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- GUINDASTES -->
+    <section class="card">
+      <h2 class="section-title">🏗️ Posicionamento dos Guindastes</h2>
+      <div class="equip-list" id="list-guindastes"></div>
+    </section>
+
+    <!-- CARRETAS -->
+    <section class="card">
+      <h2 class="section-title">🚛 Status das Carretas – Mina</h2>
+      <div class="equip-list" id="list-carretas"></div>
+    </section>
+
+    <!-- CAMINHÕES -->
+    <section class="card">
+      <h2 class="section-title">🚚 Status dos Caminhões – Mina / Turno</h2>
+      <div class="equip-list" id="list-caminhoes"></div>
+    </section>
+
+    <!-- GUINDAUTO -->
+    <section class="card">
+      <h2 class="section-title">🔧 Guindauto Sky Munck</h2>
+      <div class="equip-list" id="list-guindauto"></div>
+    </section>
+
+    <!-- EMPILHADEIRAS -->
+    <section class="card">
+      <h2 class="section-title">🏭 Status das Empilhadeiras</h2>
+      <div class="equip-list" id="list-empilhadeiras"></div>
+    </section>
+
+    <!-- LEGENDA -->
+    <section class="card legend-card">
+      <h2 class="section-title">Legenda</h2>
+      <div class="legend-list">
+        <span><span class="dot green"></span>Com Operador</span>
+        <span><span class="dot yellow"></span>Sem Operador</span>
+        <span><span class="dot red"></span>Manutenção Corretiva / Preventiva</span>
+      </div>
+    </section>
+
+    <!-- ENVIO -->
+    <section class="card">
+      <h2 class="section-title">Envio do Relatório</h2>
+      <div class="btn-row">
+        <button id="generateBtn" class="btn btn-primary">📋 Gerar Texto</button>
+        <button id="copyBtn"     class="btn btn-secondary">📄 Copiar</button>
+        <button id="whatsappBtn" class="btn btn-whatsapp">💬 Enviar WhatsApp</button>
+      </div>
+      <pre id="output" class="output hidden"></pre>
+    </section>
+
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
