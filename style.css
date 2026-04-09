@@ -254,17 +254,21 @@ select:focus {
 .equip-tag-input {
   width: 100%;
   min-width: 0;
+  display: block;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text);
   font-weight: 700;
   font-size: 14px;
   padding: 6px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-text-fill-color: var(--text);
 }
 
 .equip-tag-input[readonly] {
   cursor: default;
-  opacity: 0.95;
+  opacity: 1;
 }
 
 .equip-tag-input.editable {
@@ -345,16 +349,41 @@ select:focus {
   .equip-row {
     grid-template-columns: 42px 1fr;
     grid-template-rows: auto auto auto;
+    align-items: start;
   }
-  .equip-row .equip-name {
+
+  .equip-row .equip-tag-input {
     grid-column: 2;
     grid-row: 1;
+    min-width: 0;
   }
+
   .equip-row select {
     grid-column: 1 / -1;
+    grid-row: 2;
   }
+
+  .equip-row .equip-sub-input {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    min-width: 0;
+  }
+
   .equip-row.no-signaler,
   .equip-row.status-only {
     grid-template-columns: 42px 1fr;
+  }
+
+  .g-line {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .g-line .equip-tag-input,
+  .g-line .equip-sub-input,
+  .g-line select {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
   }
 }
