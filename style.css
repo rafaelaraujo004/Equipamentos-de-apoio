@@ -347,42 +347,68 @@ select:focus {
 /* ── RESPONSIVO ──────────────────────────────────────── */
 @media (max-width: 640px) {
   .equip-row {
-    grid-template-columns: 42px 1fr;
-    grid-template-rows: auto auto auto;
-    align-items: start;
+    grid-template-columns: 42px minmax(0, 1fr);
+    grid-template-areas:
+      'status tag'
+      'operator operator'
+      'sub sub';
+    align-items: center;
+  }
+
+  .equip-row .status-btn {
+    grid-area: status;
   }
 
   .equip-row .equip-tag-input {
-    grid-column: 2;
-    grid-row: 1;
+    grid-area: tag;
     min-width: 0;
   }
 
   .equip-row select {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    grid-area: operator;
   }
 
   .equip-row .equip-sub-input {
-    grid-column: 1 / -1;
-    grid-row: 3;
+    grid-area: sub;
     min-width: 0;
   }
 
   .equip-row.no-signaler,
   .equip-row.status-only {
-    grid-template-columns: 42px 1fr;
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .equip-row.status-only {
+    grid-template-areas: 'status tag';
   }
 
   .g-line {
-    flex-wrap: wrap;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+
+  .g-line .status-btn,
+  .g-line .status-btn-sm {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    flex: 0 0 auto;
   }
 
   .g-line .equip-tag-input,
-  .g-line .equip-sub-input,
   .g-line select {
-    flex: 1 1 100%;
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .g-line .equip-sub-input {
+    grid-column: 1 / -1;
+    grid-row: 2;
     min-width: 0;
     max-width: none;
   }
