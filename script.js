@@ -57,6 +57,44 @@ DATA = {
 
 // ── Auxiliares ─────────────────────────────────────────────────────────────────
 
+// Banner de instalação do app (PWA)
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  document.getElementById('installBanner').style.display = 'block';
+});
+
+// Registrar o service worker para PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js');
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const banner = document.getElementById('installBanner');
+  const installBtn = document.getElementById('installBtn');
+  const closeBtn = document.getElementById('closeInstallBanner');
+  if (installBtn) {
+    installBtn.onclick = async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+          banner.style.display = 'none';
+        }
+        deferredPrompt = null;
+      }
+    };
+  }
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      banner.style.display = 'none';
+    };
+  }
+});
+
 function buildSelect(options, current, onChange) {
   const sel = document.createElement('select');
   options.forEach(opt => {
@@ -315,13 +353,124 @@ function buildReport() {
   return t;
 }
 
+// ── Funções do histórico ──────────────────────────────────────────────────────
+function getHistory() {
+  return JSON.parse(localStorage.getItem('relatorioHistory') || '[]');
+}
+function saveHistory(arr) {
+  localStorage.setItem('relatorioHistory', JSON.stringify(arr));
+}
+function addToHistory(report) {
+  const arr = getHistory();
+  arr.unshift({
+    date: new Date().toLocaleString(),
+    content: report
+  });
+  saveHistory(arr);
+}
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  if (!list) return;
+  const arr = getHistory();
+  list.innerHTML = '';
+  if (arr.length === 0) {
+    list.innerHTML = '<li style="color:#888">Nenhum relatório salvo ainda.</li>';
+    return;
+  }
+  arr.forEach((item, idx) => {
+    const li = document.createElement('li');
+    li.style = 'border-bottom:1px solid #eee;padding:8px 0;';
+    li.innerHTML = `<b style='color:#222'>${item.date}</b><br><pre style='white-space:pre-wrap;font-size:13px;background:#fff;color:#222;padding:8px;border-radius:4px;border:1px solid #e0e0e0;'>${item.content.replace(/</g,'&lt;')}</pre>`;
+    list.appendChild(li);
+  });
+}
+
 // ── Eventos ────────────────────────────────────────────────────────────────────
+// Adicionar novos equipamentos
+document.getElementById('addGuindasteBtn').addEventListener('click', () => {
+  DATA.guindastes.push({ tag: '', status: E_GREEN, operatorStatus: E_GREEN, operator: 'COM OPERADOR', signalerStatus: E_GREEN, signaler: 'COM SINALEIRO', sub: '' });
+  renderAll();
+});
+document.getElementById('addCarretaBtn').addEventListener('click', () => {
+  DATA.carretas.push({ tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' });
+  renderAll();
+});
+document.getElementById('addCaminhaoBtn').addEventListener('click', () => {
+  DATA.caminhoes.push({ tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' });
+  renderAll();
+});
+document.getElementById('addGuindautoBtn').addEventListener('click', () => {
+  DATA.guindauto.push({ tag: '', status: E_GREEN });
+  renderAll();
+});
+document.getElementById('addEmpilhadeiraBtn').addEventListener('click', () => {
+  DATA.empilhadeiras.push({ tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' });
+  renderAll();
+});
+document.getElementById('generateBtn').addEventListener('click', () => {
+  const out = document.getElementById('output');
+  const report = buildReport();
+  out.textContent = report;
+  out.classList.remove('hidden');
+  out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  addToHistory(report);
+  renderHistory();
+});
 
 document.getElementById('generateBtn').addEventListener('click', () => {
   const out = document.getElementById('output');
-  out.textContent = buildReport();
+  const report = buildReport();
+  out.textContent = report;
   out.classList.remove('hidden');
   out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  addToHistory(report);
+  renderHistory();
+});
+// Botão para alternar aba de histórico
+document.getElementById('toggleHistoryBtn').addEventListener('click', () => {
+  const sec = document.getElementById('historySection');
+  if (sec.style.display === 'none') {
+    sec.style.display = '';
+    renderHistory();
+  } else {
+    sec.style.display = 'none';
+  }
+});
+
+// Exportar histórico
+document.getElementById('exportHistoryBtn').addEventListener('click', () => {
+  const arr = getHistory();
+  const blob = new Blob([JSON.stringify(arr, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'historico-relatorios.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+// Importar histórico
+document.getElementById('importHistoryInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    try {
+      const arr = JSON.parse(ev.target.result);
+      if (Array.isArray(arr)) {
+        saveHistory(arr);
+        renderHistory();
+        alert('Histórico importado com sucesso!');
+      } else {
+        alert('Arquivo inválido.');
+      }
+    } catch {
+      alert('Erro ao importar arquivo.');
+    }
+  };
+  reader.readAsText(file);
 });
 
 document.getElementById('copyBtn').addEventListener('click', async () => {
@@ -331,16 +480,6 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
   setTimeout(() => { btn.textContent = '📄 Copiar'; }, 2500);
 });
 
-document.getElementById('whatsappBtn').addEventListener('click', () => {
-  const text = encodeURIComponent(buildReport());
-  const a = document.createElement('a');
-  a.href = `https://wa.me/?text=${text}`;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-});
 
 // ── Data padrão = hoje ─────────────────────────────────────────────────────────
 

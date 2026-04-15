@@ -1,0 +1,20 @@
+{
+  "name": "Status XCMG – Relatório Diário",
+  "short_name": "Status XCMG",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#1761ab",
+  "theme_color": "#1761ab",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "favicon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
