@@ -169,7 +169,7 @@ select:focus {
 /* Linha única: sem-sinaleiro [emoji] [tag] [operador] [substitui] */
 .equip-row {
   display: grid;
-  grid-template-columns: 46px 1fr 180px 240px;
+  grid-template-columns: 46px 1fr 180px 240px 44px;
   align-items: center;
   gap: 10px;
   background: #0d1729;
@@ -181,12 +181,7 @@ select:focus {
 .equip-row:hover { border-color: var(--accent); }
 
 .equip-row.no-signaler {
-  grid-template-columns: 46px 1fr 180px 240px;
-}
-
-/* Guindauto: só status + tag */
-.equip-row.status-only {
-  grid-template-columns: 46px 1fr;
+  grid-template-columns: 46px 1fr 180px 240px 44px;
 }
 
 /* Input de substituição de tag */
@@ -242,6 +237,24 @@ select:focus {
 .status-btn:hover {
   transform: scale(1.18);
   border-color: rgba(255,255,255,.45);
+}
+
+.delete-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, .45);
+  background: rgba(239, 68, 68, .12);
+  color: #ffb4b4;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background .2s, border-color .2s, transform .15s;
+}
+
+.delete-btn:hover {
+  background: rgba(239, 68, 68, .2);
+  border-color: rgba(239, 68, 68, .8);
+  transform: translateY(-1px);
 }
 
 .equip-name {
@@ -350,6 +363,7 @@ select:focus {
     grid-template-columns: 42px minmax(0, 1fr);
     grid-template-areas:
       'status tag'
+      'delete delete'
       'operator operator'
       'sub sub';
     align-items: center;
@@ -373,13 +387,13 @@ select:focus {
     min-width: 0;
   }
 
-  .equip-row.no-signaler,
-  .equip-row.status-only {
-    grid-template-columns: 42px minmax(0, 1fr);
+  .equip-row .delete-btn {
+    grid-area: delete;
+    justify-self: end;
   }
 
-  .equip-row.status-only {
-    grid-template-areas: 'status tag';
+  .equip-row.no-signaler {
+    grid-template-columns: 42px minmax(0, 1fr);
   }
 
   .g-line {

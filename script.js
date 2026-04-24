@@ -14,6 +14,35 @@ const E_RED    = String.fromCodePoint(0x1F534); // 🔴
 const STATUS_CYCLE  = [E_GREEN, E_YELLOW, E_RED];
 const OP_OPTIONS    = ['COM OPERADOR', 'SEM OPERADOR', 'OPERAÇÃO VALE', 'MANUTENÇÃO CORRETIVA', 'MANUTENÇÃO PREVENTIVA'];
 const SIG_OPTIONS   = ['COM SINALEIRO', 'SEM SINALEIRO'];
+const PENDING_EVENTS_KEY = 'pendingEquipmentEvents';
+const DATA_STORAGE_KEY   = 'xcmgEquipmentData';
+
+let firebaseDb = null;
+let _saveTimer = null;
+
+function saveData() {
+  localStorage.setItem(DATA_STORAGE_KEY, JSON.stringify(DATA));
+}
+
+function scheduleSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveData, 400);
+}
+
+function loadSavedData() {
+  try {
+    const saved = localStorage.getItem(DATA_STORAGE_KEY);
+    if (!saved) return;
+    const parsed = JSON.parse(saved);
+    if (parsed && typeof parsed === 'object') {
+      ['guindastes', 'carretas', 'caminhoes', 'guindauto', 'empilhadeiras'].forEach(key => {
+        if (Array.isArray(parsed[key]) && parsed[key].length > 0) DATA[key] = parsed[key];
+      });
+    }
+  } catch (e) {
+    console.warn('Falha ao carregar dados salvos:', e);
+  }
+}
 
 // ── Dados dos equipamentos (usa constantes de emoji) ─────────────────────────────
 
@@ -28,6 +57,7 @@ DATA = {
   carretas: [
     { tag: '1JA268', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
     { tag: '1JA273', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
+    { tag: '1JA259', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
   ],
   caminhoes: [
     { tag: '1JA343', status: E_YELLOW, operator: 'SEM OPERADOR', sub: '' },
@@ -43,7 +73,7 @@ DATA = {
     { tag: '1JA339', status: E_RED,    operator: 'MANUTENÇÃO CORRETIVA', sub: '' },
   ],
   guindauto: [
-    { tag: '1JA416', status: E_RED },
+    { tag: '1JA416', status: E_RED, operator: 'COM OPERADOR', sub: '' },
   ],
   empilhadeiras: [
     { tag: '1JA369 (16t)', status: E_GREEN, operator: 'OPERAÇÃO VALE', sub: '' },
@@ -127,7 +157,7 @@ function createTagField(equip, statusField = 'status') {
   input.type = 'text';
   input.className = 'equip-tag-input';
   input.value = equip.tag;
-  input.addEventListener('input', () => { equip.tag = input.value.trim() || equip.tag; });
+  input.addEventListener('input', () => { equip.tag = input.value.trim() || equip.tag; scheduleSave(); });
   updateTagEditState(input, equip[statusField] === E_RED);
   return input;
 }
@@ -136,6 +166,131 @@ function getStatusFromOperator(value) {
   if (value === 'MANUTENÇÃO CORRETIVA' || value === 'MANUTENÇÃO PREVENTIVA') return E_RED;
   if (value === 'SEM OPERADOR' || value === 'SEM SINALEIRO') return E_YELLOW;
   return E_GREEN;
+}
+
+function hasFirebaseConfig(config) {
+  if (!config || typeof config !== 'object') return false;
+  const required = ['apiKey', 'authDomain', 'projectId', 'appId'];
+  return required.every(k => typeof config[k] === 'string' && config[k].trim() !== '');
+}
+
+function initFirebase() {
+  if (!window.firebase) return;
+  // Aceita tanto window.FIREBASE_CONFIG (template padrão) quanto
+  // window.firebaseConfig (gerado automaticamente pelo console do Firebase)
+  const config = window.FIREBASE_CONFIG || window.firebaseConfig;
+  if (!hasFirebaseConfig(config)) return;
+
+  try {
+    const app = window.firebase.apps && window.firebase.apps.length
+      ? window.firebase.app()
+      : window.firebase.initializeApp(config);
+    firebaseDb = app.firestore();
+  } catch (err) {
+    console.error('Falha ao inicializar Firebase:', err);
+    firebaseDb = null;
+  }
+}
+
+function getPendingEvents() {
+  return JSON.parse(localStorage.getItem(PENDING_EVENTS_KEY) || '[]');
+}
+
+function savePendingEvents(events) {
+  localStorage.setItem(PENDING_EVENTS_KEY, JSON.stringify(events));
+}
+
+function queuePendingEvent(payload) {
+  const events = getPendingEvents();
+  events.push(payload);
+  savePendingEvents(events);
+}
+
+function buildEventPayload(action, equipmentType, equip) {
+  return {
+    action,
+    equipmentType,
+    tag: equip.tag || '',
+    status: equip.status || '',
+    operator: equip.operator || '',
+    sub: equip.sub || '',
+    clientCreatedAt: new Date().toISOString()
+  };
+}
+
+async function sendEventToFirebase(payload) {
+  if (!firebaseDb) return false;
+  try {
+    await firebaseDb.collection('equipment_events').add({
+      ...payload,
+      createdAt: window.firebase.firestore.FieldValue.serverTimestamp()
+    });
+    return true;
+  } catch (err) {
+    console.error('Falha ao gravar evento no Firebase:', err);
+    return false;
+  }
+}
+
+async function flushPendingEvents() {
+  const pending = getPendingEvents();
+  if (!pending.length) return;
+
+  const failed = [];
+  for (const payload of pending) {
+    const ok = await sendEventToFirebase(payload);
+    if (!ok) failed.push(payload);
+  }
+  savePendingEvents(failed);
+}
+
+function logEquipmentEvent(action, equipmentType, equip) {
+  const payload = buildEventPayload(action, equipmentType, equip);
+  sendEventToFirebase(payload).then(ok => {
+    if (!ok) queuePendingEvent(payload);
+  });
+}
+
+async function saveSnapshotToFirebase() {
+  const statusEl = document.getElementById('saveFirebaseStatus');
+  const btn      = document.getElementById('saveFirebaseBtn');
+
+  if (!firebaseDb) {
+    statusEl.style.color = '#ef4444';
+    statusEl.textContent = '⚠️ Firebase não conectado. Verifique as credenciais.';
+    return;
+  }
+
+  btn.disabled     = true;
+  btn.textContent  = '⏳ Salvando...';
+  statusEl.textContent = '';
+
+  const snapshot = {
+    savedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+    clientSavedAt: new Date().toISOString(),
+    guindastes:    DATA.guindastes,
+    carretas:      DATA.carretas,
+    caminhoes:     DATA.caminhoes,
+    guindauto:     DATA.guindauto,
+    empilhadeiras: DATA.empilhadeiras,
+  };
+
+  try {
+    await firebaseDb.collection('equipment_snapshots').add(snapshot);
+    btn.textContent      = '✅ Salvo!';
+    statusEl.style.color = '#22c55e';
+    statusEl.textContent = `Salvo em ${new Date().toLocaleString()}`;
+  } catch (err) {
+    console.error('Erro ao salvar snapshot:', err);
+    btn.textContent      = '☁️ Salvar no Firebase';
+    statusEl.style.color = '#ef4444';
+    statusEl.textContent = '❌ Falha ao salvar. Tente novamente.';
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => {
+      if (btn.textContent === '✅ Salvo!') btn.textContent = '☁️ Salvar no Firebase';
+    }, 3000);
+  }
 }
 
 function getEffectiveStatus(equip) {
@@ -183,7 +338,7 @@ function makeStatusBtn(equip, field, onChange) {
   return btn;
 }
 
-function renderRow(equip, type) {
+function renderRow(equip, type, onDelete) {
   // ── Guindastes: layout em 3 sub-linhas (equip / operador / sinaleiro) ──
   if (type === 'guindastes') {
     const card = document.createElement('div');
@@ -202,6 +357,7 @@ function renderRow(equip, type) {
       if (sigBtn) syncStatusButton(sigBtn, equip.signalerStatus);
       updateTagEditState(tagInput, equip.status === E_RED);
       applyCardStatusClass(card, getEffectiveStatus(equip));
+      scheduleSave();
     };
 
     const equipBtn = makeStatusBtn(equip, 'status', refreshVisualState);
@@ -211,10 +367,19 @@ function renderRow(equip, type) {
     subInput.placeholder = '↔ Substitui (ex: 1JA339)';
     subInput.value       = equip.sub || '';
     subInput.title       = 'Preencha se este equipamento está substituindo outra tag em manutenção';
-    subInput.addEventListener('input', () => { equip.sub = subInput.value.trim(); });
+    subInput.addEventListener('input', () => { equip.sub = subInput.value.trim(); scheduleSave(); });
     line1.appendChild(equipBtn);
     line1.appendChild(tagInput);
     line1.appendChild(subInput);
+    if (onDelete) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.title = 'Excluir equipamento';
+      deleteBtn.textContent = '🗑';
+      deleteBtn.addEventListener('click', onDelete);
+      line1.appendChild(deleteBtn);
+    }
 
     // Linha 2 — operador
     const line2 = document.createElement('div');
@@ -253,8 +418,7 @@ function renderRow(equip, type) {
   // ── Demais equipamentos: linha única ──
   const row = document.createElement('div');
   let cls = 'equip-row';
-  if (type === 'guindauto') cls += ' status-only';
-  else                      cls += ' no-signaler';
+  cls += ' no-signaler';
   row.className = cls;
 
   const tagInput = createTagField(equip, 'status');
@@ -262,6 +426,7 @@ function renderRow(equip, type) {
     syncStatusButton(btn, equip.status);
     updateTagEditState(tagInput, equip.status === E_RED);
     applyCardStatusClass(row, getEffectiveStatus(equip));
+    scheduleSave();
   };
 
   const btn = makeStatusBtn(equip, 'status', refreshVisualState);
@@ -278,15 +443,23 @@ function renderRow(equip, type) {
     row.appendChild(opSel);
   }
 
-  if (type !== 'guindauto') {
-    const subInput = document.createElement('input');
-    subInput.type        = 'text';
-    subInput.className   = 'equip-sub-input';
-    subInput.placeholder = '↔ Substitui (ex: 1JA339)';
-    subInput.value       = equip.sub || '';
-    subInput.title       = 'Preencha se este equipamento está substituindo outra tag em manutenção';
-    subInput.addEventListener('input', () => { equip.sub = subInput.value.trim(); });
-    row.appendChild(subInput);
+  const subInput = document.createElement('input');
+  subInput.type        = 'text';
+  subInput.className   = 'equip-sub-input';
+  subInput.placeholder = '↔ Substitui (ex: 1JA339)';
+  subInput.value       = equip.sub || '';
+  subInput.title       = 'Preencha se este equipamento está substituindo outra tag em manutenção';
+  subInput.addEventListener('input', () => { equip.sub = subInput.value.trim(); scheduleSave(); });
+  row.appendChild(subInput);
+
+  if (onDelete) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'delete-btn';
+    deleteBtn.title = 'Excluir equipamento';
+    deleteBtn.textContent = '🗑';
+    deleteBtn.addEventListener('click', onDelete);
+    row.appendChild(deleteBtn);
   }
 
   refreshVisualState();
@@ -296,10 +469,21 @@ function renderRow(equip, type) {
 function renderSection(listId, items, type) {
   const container = document.getElementById(listId);
   container.innerHTML = '';
-  items.forEach(item => container.appendChild(renderRow(item, type)));
+  items.forEach((item, idx) => {
+    const handleDelete = () => {
+      const label = item.tag ? ` o equipamento ${item.tag}` : ' este equipamento';
+      const confirmed = window.confirm(`Deseja realmente excluir${label}?`);
+      if (!confirmed) return;
+      logEquipmentEvent('deleted', type, item);
+      items.splice(idx, 1);
+      renderAll();
+    };
+    container.appendChild(renderRow(item, type, handleDelete));
+  });
 }
 
 function renderAll() {
+  saveData();
   renderSection('list-guindastes',    DATA.guindastes,    'guindastes');
   renderSection('list-carretas',      DATA.carretas,      'carretas');
   renderSection('list-caminhoes',     DATA.caminhoes,     'caminhoes');
@@ -339,7 +523,7 @@ function buildReport() {
   // Guindauto
   t += `\n*Guindauto Sky Munck*\n`;
   DATA.guindauto.forEach(e => {
-    t += `${e.status} ${e.tag}\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator || ''}`.trimEnd() + `\n`;
   });
 
   // Empilhadeiras
@@ -362,11 +546,23 @@ function saveHistory(arr) {
 }
 function addToHistory(report) {
   const arr = getHistory();
+  const alreadyExists = arr.some(item => item.content === report);
+  if (alreadyExists) return;
   arr.unshift({
     date: new Date().toLocaleString(),
     content: report
   });
   saveHistory(arr);
+}
+
+function dedupeHistory(arr) {
+  const seen = new Set();
+  return arr.filter(item => {
+    if (!item || typeof item.content !== 'string') return false;
+    if (seen.has(item.content)) return false;
+    seen.add(item.content);
+    return true;
+  });
 }
 function renderHistory() {
   const list = document.getElementById('historyList');
@@ -388,35 +584,35 @@ function renderHistory() {
 // ── Eventos ────────────────────────────────────────────────────────────────────
 // Adicionar novos equipamentos
 document.getElementById('addGuindasteBtn').addEventListener('click', () => {
-  DATA.guindastes.push({ tag: '', status: E_GREEN, operatorStatus: E_GREEN, operator: 'COM OPERADOR', signalerStatus: E_GREEN, signaler: 'COM SINALEIRO', sub: '' });
+  const item = { tag: '', status: E_GREEN, operatorStatus: E_GREEN, operator: 'COM OPERADOR', signalerStatus: E_GREEN, signaler: 'COM SINALEIRO', sub: '' };
+  DATA.guindastes.push(item);
+  logEquipmentEvent('added', 'guindastes', item);
   renderAll();
 });
 document.getElementById('addCarretaBtn').addEventListener('click', () => {
-  DATA.carretas.push({ tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' });
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  DATA.carretas.push(item);
+  logEquipmentEvent('added', 'carretas', item);
   renderAll();
 });
 document.getElementById('addCaminhaoBtn').addEventListener('click', () => {
-  DATA.caminhoes.push({ tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' });
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  DATA.caminhoes.push(item);
+  logEquipmentEvent('added', 'caminhoes', item);
   renderAll();
 });
 document.getElementById('addGuindautoBtn').addEventListener('click', () => {
-  DATA.guindauto.push({ tag: '', status: E_GREEN });
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  DATA.guindauto.push(item);
+  logEquipmentEvent('added', 'guindauto', item);
   renderAll();
 });
 document.getElementById('addEmpilhadeiraBtn').addEventListener('click', () => {
-  DATA.empilhadeiras.push({ tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' });
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  DATA.empilhadeiras.push(item);
+  logEquipmentEvent('added', 'empilhadeiras', item);
   renderAll();
 });
-document.getElementById('generateBtn').addEventListener('click', () => {
-  const out = document.getElementById('output');
-  const report = buildReport();
-  out.textContent = report;
-  out.classList.remove('hidden');
-  out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  addToHistory(report);
-  renderHistory();
-});
-
 document.getElementById('generateBtn').addEventListener('click', () => {
   const out = document.getElementById('output');
   const report = buildReport();
@@ -460,7 +656,7 @@ document.getElementById('importHistoryInput').addEventListener('change', (e) => 
     try {
       const arr = JSON.parse(ev.target.result);
       if (Array.isArray(arr)) {
-        saveHistory(arr);
+        saveHistory(dedupeHistory(arr));
         renderHistory();
         alert('Histórico importado com sucesso!');
       } else {
@@ -483,6 +679,7 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
 
 // ── Data padrão = hoje ─────────────────────────────────────────────────────────
 
+
 (function setTodayDate() {
   const d   = new Date();
   const pad = n => String(n).padStart(2, '0');
@@ -493,8 +690,17 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
   const days = ['DOMINGO','SEGUNDA-FEIRA','TERÇA-FEIRA','QUARTA-FEIRA',
                  'QUINTA-FEIRA','SEXTA-FEIRA','SÁBADO'];
   document.getElementById('weekdaySelect').value = days[d.getDay()];
+
+  // Turno padrão sempre "C"
+  document.getElementById('shiftSelect').value = 'C';
 })();
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
+initFirebase();
+flushPendingEvents();
+window.addEventListener('online', flushPendingEvents);
+loadSavedData();
 renderAll();
+
+document.getElementById('saveFirebaseBtn').addEventListener('click', saveSnapshotToFirebase);
