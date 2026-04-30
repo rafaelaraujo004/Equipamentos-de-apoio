@@ -707,6 +707,20 @@ function addToHistory(report) {
     content: report
   });
   saveHistory(arr);
+  saveHistoryToFirebase(arr[0]);
+}
+
+// Salva um item de histórico no Firebase
+async function saveHistoryToFirebase(item) {
+  if (!firebaseDb) return;
+  try {
+    await firebaseDb.collection('relatorio_history').add({
+      ...item,
+      savedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error('Erro ao salvar histórico no Firebase:', err);
+  }
 }
 
 function dedupeHistory(arr) {
