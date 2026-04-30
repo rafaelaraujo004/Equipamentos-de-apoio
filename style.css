@@ -1,3 +1,29 @@
+/* ── MÉTRICAS ───────────────────────────────────────────── */
+#metricsSection {
+  margin-top: 20px;
+}
+#metricsTableWrapper {
+  overflow-x: auto;
+}
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+  background: #101a2b;
+  color: #e8edf7;
+}
+.metrics-table th, .metrics-table td {
+  border: 1px solid #22345a;
+  padding: 8px 12px;
+  text-align: center;
+}
+.metrics-table th {
+  background: #14213d;
+  font-weight: bold;
+}
+.metrics-table tr:nth-child(even) {
+  background: #111c30;
+}
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;

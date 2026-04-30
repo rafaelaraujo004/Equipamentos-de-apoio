@@ -33,7 +33,16 @@
       </div>
       <ul id="historyList" style="max-height:300px;overflow:auto;padding:0;list-style:none;"></ul>
     </section>
-    <button id="toggleHistoryBtn" class="btn btn-secondary" style="position:fixed;top:16px;right:16px;z-index:1001;">📚 Histórico</button>
+    <div style="display:flex;gap:8px;position:fixed;top:16px;right:16px;z-index:1001;">
+      <button id="toggleHistoryBtn" class="btn btn-secondary">📚 Histórico</button>
+      <button id="toggleMetricsBtn" class="btn btn-secondary">📊 Métricas</button>
+    </div>
+    <!-- MÉTRICAS MENSAIS -->
+    <section class="card" id="metricsSection" style="display:none;">
+      <h2 class="section-title">📊 Métricas Mensais</h2>
+      <canvas id="metricsChart" style="max-width:100%;margin-bottom:24px;"></canvas>
+      <div id="metricsTableWrapper"></div>
+    </section>
 
     <!-- CABEÇALHO -->
     <section class="card">
@@ -133,6 +142,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="firebase-config.js"></script>
   <script src="script.js"></script>
 </body>

@@ -1,3 +1,113 @@
+// Função utilitária para extrair métricas de um relatório
+function extractMetricsFromReport(reportText) {
+  const E_G = String.fromCodePoint(0x1F7E2);
+  const E_Y = String.fromCodePoint(0x1F7E1);
+  const E_R = String.fromCodePoint(0x1F534);
+  const lines = reportText.split('\n');
+  let operacionais = 0, inoperantes = 0, semOperador = 0;
+  for (const line of lines) {
+    // Considera apenas linhas que contêm uma tag de equipamento (1JA)
+    if (!/1JA/.test(line)) continue;
+    if (line.startsWith(E_R)) {
+      inoperantes++;
+    } else if (line.startsWith(E_Y)) {
+      semOperador++;
+    } else if (line.startsWith(E_G)) {
+      operacionais++;
+    }
+  }
+  return { operacionais, inoperantes, semOperador };
+}
+
+// Busca histórico do Firebase e renderiza gráfico/tabela
+async function renderMetrics() {
+  const chartEl = document.getElementById('metricsChart');
+  const tableWrapper = document.getElementById('metricsTableWrapper');
+  // Buscar últimos relatórios do mês atual (ou usar histórico local)
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  let data = [];
+  if (!firebaseDb) {
+    data = getHistory().map(item => ({
+      date: new Date(item.date || item.dateLabel),
+      content: item.content
+    }));
+  } else {
+    try {
+      const snap = await firebaseDb.collection('relatorio_history')
+        .orderBy('savedAt', 'asc')
+        .get();
+      snap.forEach(doc => {
+        const d = doc.data();
+        if (d.content && d.savedAt && d.savedAt.toDate) {
+          const date = d.savedAt.toDate();
+          if (date >= firstDay && date <= lastDay) {
+            data.push({ date, content: d.content });
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Erro ao carregar métricas do Firebase:', err);
+      data = getHistory().map(item => ({
+        date: new Date(item.date || item.dateLabel),
+        content: item.content
+      }));
+    }
+  }
+  // Agrupar por dia
+  const daily = {};
+  data.forEach(item => {
+    const day = item.date.toISOString().slice(0, 10);
+    if (!daily[day]) daily[day] = [];
+    daily[day].push(item.content);
+  });
+  // Calcular métricas por dia
+  const days = Object.keys(daily).sort();
+  const metrics = days.map(day => {
+    // Pega o último relatório do dia
+    const lastReport = daily[day][daily[day].length - 1];
+    const m = extractMetricsFromReport(lastReport);
+    return { day, ...m };
+  });
+  if (!metrics.length) {
+    chartEl.style.display = 'none';
+    tableWrapper.innerHTML = '<p style="color:#e8edf7">Nenhum relatório disponível para este mês.</p>';
+    return;
+  }
+  chartEl.style.display = '';
+  // Gráfico
+  if (window.metricsChartInstance) window.metricsChartInstance.destroy();
+  window.metricsChartInstance = new Chart(chartEl, {
+    type: 'line',
+    data: {
+      labels: metrics.map(m => m.day.slice(8, 10) + '/' + m.day.slice(5, 7)),
+      datasets: [
+        { label: 'Operacionais', data: metrics.map(m => m.operacionais), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', fill: false },
+        { label: 'Inoperantes', data: metrics.map(m => m.inoperantes), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.2)', fill: false },
+        { label: 'Sem Operador', data: metrics.map(m => m.semOperador), borderColor: '#eab308', backgroundColor: 'rgba(234,179,8,0.2)', fill: false },
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#e8edf7' } },
+        title: { display: true, text: 'Métricas diárias do mês', color: '#e8edf7' }
+      },
+      scales: {
+        x: { ticks: { color: '#e8edf7' }, grid: { color: '#22345a' } },
+        y: { beginAtZero: true, ticks: { color: '#e8edf7' }, grid: { color: '#22345a' } }
+      }
+    }
+  });
+  // Tabela detalhada
+  let html = '<table class="metrics-table"><thead><tr><th>Data</th><th>Operacionais</th><th>Inoperantes</th><th>Sem Operador</th></tr></thead><tbody>';
+  metrics.forEach(m => {
+    html += `<tr><td>${m.day.split('-').reverse().join('/')}</td><td>${m.operacionais}</td><td>${m.inoperantes}</td><td>${m.semOperador}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  tableWrapper.innerHTML = html;
+}
 // ── Dados dos equipamentos ─────────────────────────────────────────────────────
 
 // DATA inicializado após definição dos emojis (ver abaixo após carregamento)
@@ -23,9 +133,11 @@ const DEDICATED_SUPPORT_TEAMS = {
   '1JA410': 'PERFURAÇÃO',
 };
 const PENDING_EVENTS_KEY = 'pendingEquipmentEvents';
+const PENDING_HISTORY_KEY = 'pendingHistoryItems';
 const DATA_STORAGE_KEY   = 'xcmgEquipmentData';
 
 let firebaseDb = null;
+let firebaseReady = false;
 let _saveTimer = null;
 
 function saveData() {
@@ -258,11 +370,25 @@ async function initFirebase() {
     }
 
     firebaseDb = app.firestore();
+    firebaseReady = true;
     flushPendingEvents();
+    flushPendingHistoryItems();
   } catch (err) {
     console.error('Falha ao inicializar Firebase:', err);
     firebaseDb = null;
+    firebaseReady = false;
   }
+}
+
+function flushPendingHistoryItems() {
+  if (!firebaseDb) return;
+  const pending = getPendingHistoryItems();
+  if (!pending.length) return;
+  const remaining = [];
+  pending.forEach(item => {
+    saveHistoryToFirebase(item).catch(() => remaining.push(item));
+  });
+  savePendingHistoryItems(remaining);
 }
 
 function getPendingEvents() {
@@ -277,6 +403,20 @@ function queuePendingEvent(payload) {
   const events = getPendingEvents();
   events.push(payload);
   savePendingEvents(events);
+}
+
+function getPendingHistoryItems() {
+  return JSON.parse(localStorage.getItem(PENDING_HISTORY_KEY) || '[]');
+}
+
+function savePendingHistoryItems(items) {
+  localStorage.setItem(PENDING_HISTORY_KEY, JSON.stringify(items));
+}
+
+function queuePendingHistoryItem(item) {
+  const items = getPendingHistoryItems();
+  items.push(item);
+  savePendingHistoryItems(items);
 }
 
 function buildEventPayload(action, equipmentType, equip) {
@@ -702,24 +842,39 @@ function addToHistory(report) {
   const arr = getHistory();
   const alreadyExists = arr.some(item => item.content === report);
   if (alreadyExists) return;
-  arr.unshift({
-    date: new Date().toLocaleString(),
+  const item = {
+    dateLabel: new Date().toLocaleString(),
+    date: new Date().toISOString(),
     content: report
-  });
+  };
+  arr.unshift(item);
   saveHistory(arr);
-  saveHistoryToFirebase(arr[0]);
+  saveHistoryToFirebase(item);
 }
 
-// Salva um item de histórico no Firebase
+// Gera um ID único baseado no conteúdo do relatório
+function reportDocId(item) {
+  // Usa a primeira linha do relatório (data/turno) como chave única
+  const key = (item.content || '').split('\n').find(l => l.trim()) || item.date;
+  return key.replace(/[^a-zA-Z0-9À-ÿ_\-]/g, '_').slice(0, 100);
+}
+
+// Salva um item de histórico no Firebase (sem duplicatas via ID)
 async function saveHistoryToFirebase(item) {
-  if (!firebaseDb) return;
+  if (!firebaseDb) {
+    queuePendingHistoryItem(item);
+    return;
+  }
   try {
-    await firebaseDb.collection('relatorio_history').add({
+    const docId = reportDocId(item);
+    await firebaseDb.collection('relatorio_history').doc(docId).set({
       ...item,
       savedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
-    });
+      clientCreatedAt: item.date || new Date().toISOString(),
+    }, { merge: false });
   } catch (err) {
     console.error('Erro ao salvar histórico no Firebase:', err);
+    queuePendingHistoryItem(item);
   }
 }
 
@@ -744,7 +899,8 @@ function renderHistory() {
   arr.forEach((item, idx) => {
     const li = document.createElement('li');
     li.style = 'border-bottom:1px solid #eee;padding:8px 0;';
-    li.innerHTML = `<b style='color:#222'>${item.date}</b><br><pre style='white-space:pre-wrap;font-size:13px;background:#fff;color:#222;padding:8px;border-radius:4px;border:1px solid #e0e0e0;'>${item.content.replace(/</g,'&lt;')}</pre>`;
+    const dateLabel = item.dateLabel || item.date || 'Data desconhecida';
+    li.innerHTML = `<b style='color:#222'>${dateLabel}</b><br><pre style='white-space:pre-wrap;font-size:13px;background:#fff;color:#222;padding:8px;border-radius:4px;border:1px solid #e0e0e0;'>${item.content.replace(/</g,'&lt;')}</pre>`;
     list.appendChild(li);
   });
 }
@@ -787,17 +943,45 @@ document.getElementById('generateBtn').addEventListener('click', () => {
   out.textContent = report;
   out.classList.remove('hidden');
   out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  addToHistory(report);
+  const arr = getHistory();
+  const isDuplicate = arr.some(item => item.content === report);
+  if (isDuplicate) {
+    const statusEl = document.getElementById('saveFirebaseStatus');
+    if (statusEl) {
+      statusEl.style.color = '#eab308';
+      statusEl.textContent = '⚠️ Este relatório já estava no histórico. Nenhuma duplicata salva.';
+      setTimeout(() => { statusEl.textContent = ''; }, 3500);
+    }
+  } else {
+    addToHistory(report);
+  }
   renderHistory();
 });
 // Botão para alternar aba de histórico
+
+// Alternar aba de histórico
 document.getElementById('toggleHistoryBtn').addEventListener('click', () => {
-  const sec = document.getElementById('historySection');
-  if (sec.style.display === 'none') {
-    sec.style.display = '';
+  const historySec = document.getElementById('historySection');
+  const metricsSec = document.getElementById('metricsSection');
+  if (historySec.style.display === 'none') {
+    historySec.style.display = '';
+    metricsSec.style.display = 'none';
     renderHistory();
   } else {
-    sec.style.display = 'none';
+    historySec.style.display = 'none';
+  }
+});
+
+// Alternar aba de métricas
+document.getElementById('toggleMetricsBtn').addEventListener('click', () => {
+  const historySec = document.getElementById('historySection');
+  const metricsSec = document.getElementById('metricsSection');
+  if (metricsSec.style.display === 'none') {
+    metricsSec.style.display = '';
+    historySec.style.display = 'none';
+    renderMetrics();
+  } else {
+    metricsSec.style.display = 'none';
   }
 });
 
