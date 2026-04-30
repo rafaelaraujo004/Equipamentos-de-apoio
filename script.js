@@ -14,6 +14,14 @@ const E_RED    = String.fromCodePoint(0x1F534); // 🔴
 const STATUS_CYCLE  = [E_GREEN, E_YELLOW, E_RED];
 const OP_OPTIONS    = ['COM OPERADOR', 'SEM OPERADOR', 'OPERAÇÃO VALE', 'MANUTENÇÃO CORRETIVA', 'MANUTENÇÃO PREVENTIVA'];
 const SIG_OPTIONS   = ['COM SINALEIRO', 'SEM SINALEIRO'];
+const DEDICATED_SUPPORT_TEAMS = {
+  '1JA343': 'GPA/TRUCKLESS PREVENTIVA',
+  '1JA347': 'ESCAVAÇÃO',
+  '1JA377': 'VULCANIZAÇÃO',
+  '1JA537': 'SOTREQ',
+  '1JA360': 'ELETRICA',
+  '1JA410': 'PERFURAÇÃO',
+};
 const PENDING_EVENTS_KEY = 'pendingEquipmentEvents';
 const DATA_STORAGE_KEY   = 'xcmgEquipmentData';
 
@@ -77,7 +85,7 @@ DATA = {
   ],
   empilhadeiras: [
     { tag: '1JA369 (16t)', status: E_GREEN, operator: 'OPERAÇÃO VALE', sub: '' },
-    { tag: 'JA373 (16t)',  status: E_GREEN, operator: 'COM OPERADOR',  sub: '' },
+    { tag: '1JA373 (16t)',  status: E_GREEN, operator: 'COM OPERADOR',  sub: '' },
     { tag: '1JA371 (16t)', status: E_GREEN, operator: 'OPERAÇÃO VALE', sub: '' },
     { tag: '1JA374 (7t)',  status: E_GREEN, operator: 'COM OPERADOR',  sub: '' },
     { tag: '1JA375 (10t)', status: E_RED,   operator: 'OPERAÇÃO VALE', sub: '' },
@@ -162,6 +170,64 @@ function createTagField(equip, statusField = 'status') {
   return input;
 }
 
+function createSupportTeamField(equip) {
+  const dedicatedTeam = DEDICATED_SUPPORT_TEAMS[equip.tag] || '';
+  if (!equip.supportTeam && dedicatedTeam) {
+    equip.supportTeam = dedicatedTeam;
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'equip-support-wrapper';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'equip-support-input';
+  input.placeholder = 'Equipe para a qual esse equipamento dara apoio';
+  input.value = equip.supportTeam || '';
+  input.title = dedicatedTeam
+    ? `Equipamento dedicado a ${dedicatedTeam}`
+    : 'Informe a equipe que recebera apoio deste equipamento';
+
+  if (dedicatedTeam) {
+    input.classList.add('has-dedicated-team');
+    if (equip.supportTeam && equip.supportTeam !== dedicatedTeam) {
+      input.classList.add('support-team-diverged');
+    }
+  }
+
+  input.addEventListener('change', () => {
+    const nextValue = input.value.trim();
+    if (dedicatedTeam && nextValue && nextValue !== dedicatedTeam) {
+      const confirmed = window.confirm(
+        `Autorizacao necessaria.\n\nO equipamento ${equip.tag} e dedicado a equipe ${dedicatedTeam}.\n\nDeseja realmente destina-lo para ${nextValue}?`
+      );
+
+      if (!confirmed) {
+        input.value = equip.supportTeam || dedicatedTeam;
+        return;
+      }
+    }
+
+    equip.supportTeam = nextValue;
+    if (dedicatedTeam) {
+      input.classList.toggle('support-team-diverged', !!nextValue && nextValue !== dedicatedTeam);
+    }
+    scheduleSave();
+  });
+
+  wrapper.appendChild(input);
+
+  if (dedicatedTeam) {
+    const badge = document.createElement('span');
+    badge.className = 'equip-support-badge';
+    badge.textContent = `🔒 Dedicado: ${dedicatedTeam}`;
+    badge.title = `Equipe dedicada fixa do equipamento ${equip.tag}`;
+    wrapper.appendChild(badge);
+  }
+
+  return wrapper;
+}
+
 function getStatusFromOperator(value) {
   if (value === 'MANUTENÇÃO CORRETIVA' || value === 'MANUTENÇÃO PREVENTIVA') return E_RED;
   if (value === 'SEM OPERADOR' || value === 'SEM SINALEIRO') return E_YELLOW;
@@ -174,7 +240,7 @@ function hasFirebaseConfig(config) {
   return required.every(k => typeof config[k] === 'string' && config[k].trim() !== '');
 }
 
-function initFirebase() {
+async function initFirebase() {
   if (!window.firebase) return;
   // Aceita tanto window.FIREBASE_CONFIG (template padrão) quanto
   // window.firebaseConfig (gerado automaticamente pelo console do Firebase)
@@ -185,7 +251,14 @@ function initFirebase() {
     const app = window.firebase.apps && window.firebase.apps.length
       ? window.firebase.app()
       : window.firebase.initializeApp(config);
+
+    const auth = app.auth();
+    if (!auth.currentUser) {
+      await auth.signInAnonymously();
+    }
+
     firebaseDb = app.firestore();
+    flushPendingEvents();
   } catch (err) {
     console.error('Falha ao inicializar Firebase:', err);
     firebaseDb = null;
@@ -214,6 +287,7 @@ function buildEventPayload(action, equipmentType, equip) {
     status: equip.status || '',
     operator: equip.operator || '',
     sub: equip.sub || '',
+    supportTeam: equip.supportTeam || '',
     clientCreatedAt: new Date().toISOString()
   };
 }
@@ -346,7 +420,7 @@ function renderRow(equip, type, onDelete) {
 
     // Linha 1 — equipamento
     const line1 = document.createElement('div');
-    line1.className = 'g-line';
+    line1.className = 'g-line g-line-primary';
     const tagInput = createTagField(equip, 'status');
     let opBtn;
     let sigBtn;
@@ -381,6 +455,8 @@ function renderRow(equip, type, onDelete) {
       line1.appendChild(deleteBtn);
     }
 
+    const supportInput = createSupportTeamField(equip);
+
     // Linha 2 — operador
     const line2 = document.createElement('div');
     line2.className = 'g-line';
@@ -409,6 +485,7 @@ function renderRow(equip, type, onDelete) {
     line3.appendChild(sigSel);
 
     card.appendChild(line1);
+    card.appendChild(supportInput);
     card.appendChild(line2);
     card.appendChild(line3);
     refreshVisualState();
@@ -452,6 +529,9 @@ function renderRow(equip, type, onDelete) {
   subInput.addEventListener('input', () => { equip.sub = subInput.value.trim(); scheduleSave(); });
   row.appendChild(subInput);
 
+  const supportInput = createSupportTeamField(equip);
+  row.appendChild(supportInput);
+
   if (onDelete) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
@@ -493,6 +573,78 @@ function renderAll() {
 
 // ── Construção do texto do relatório ───────────────────────────────────────────
 
+const REPORT_TYPE_LABELS = {
+  guindastes: {
+    preventive: ['guindaste em preventiva', 'guindastes em preventiva'],
+    corrective: ['guindaste em corretiva', 'guindastes em corretiva'],
+    noOperator: ['guindaste', 'guindastes'],
+  },
+  carretas: {
+    preventive: ['carreta em preventiva', 'carretas em preventiva'],
+    corrective: ['carreta em corretiva', 'carretas em corretiva'],
+    noOperator: ['carreta', 'carretas'],
+  },
+  caminhoes: {
+    preventive: ['caminhão em preventiva', 'caminhões em preventiva'],
+    corrective: ['caminhão em corretiva', 'caminhões em corretiva'],
+    noOperator: ['caminhão', 'caminhões'],
+  },
+  guindauto: {
+    preventive: ['munk em preventiva', 'munks em preventiva'],
+    corrective: ['munk em corretiva', 'munks em corretiva'],
+    noOperator: ['munk', 'munks'],
+  },
+  empilhadeiras: {
+    preventive: ['empilhadeira em preventiva', 'empilhadeiras em preventiva'],
+    corrective: ['empilhadeira em corretiva', 'empilhadeiras em corretiva'],
+    noOperator: ['empilhadeira', 'empilhadeiras'],
+  },
+};
+
+function buildOperationalSummary() {
+  const lines = [];
+  const sections = [
+    ['guindastes', DATA.guindastes],
+    ['carretas', DATA.carretas],
+    ['caminhoes', DATA.caminhoes],
+    ['guindauto', DATA.guindauto],
+    ['empilhadeiras', DATA.empilhadeiras],
+  ];
+
+  for (const [type, items] of sections) {
+    const labels = REPORT_TYPE_LABELS[type];
+    const preventive = items.filter(item => item.operator === 'MANUTENÇÃO PREVENTIVA');
+    const corrective = items.filter(item => item.operator === 'MANUTENÇÃO CORRETIVA');
+    const noOperator = items.filter(item => item.operator === 'SEM OPERADOR');
+
+    const formatTags = (list) => `(${list.map(item => item.tag).join(' - ')})`;
+
+    if (preventive.length) {
+      lines.push(
+        `${preventive.length} ${labels.preventive[preventive.length > 1 ? 1 : 0]} ${formatTags(preventive)}`
+      );
+    }
+
+    if (corrective.length) {
+      lines.push(
+        `${corrective.length} ${labels.corrective[corrective.length > 1 ? 1 : 0]} ${formatTags(corrective)}`
+      );
+    }
+
+    if (noOperator.length) {
+      lines.push(
+        `${noOperator.length} ${noOperator.length > 1 ? 'operadores a menos de' : 'operador a menos de'} ${labels.noOperator[noOperator.length > 1 ? 1 : 0]} ${formatTags(noOperator)}`
+      );
+    }
+  }
+
+  if (!lines.length) {
+    lines.push('Nenhum equipamento sem operador, em preventiva ou em corretiva.');
+  }
+
+  return `\n*Resumo Operacional*\n${lines.join('\n')}`;
+}
+
 function buildReport() {
   const date  = formatDate(document.getElementById('reportDate').value);
   const shift = document.getElementById('shiftSelect').value;
@@ -504,6 +656,7 @@ function buildReport() {
   t += `\n*Posicionamento dos Guindastes*\n`;
   DATA.guindastes.forEach(e => {
     t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''}\n`;
+    if (e.supportTeam) t += `APOIO ${e.supportTeam}\n`;
     t += `${e.operatorStatus} ${e.operator}\n`;
     t += `${e.signalerStatus} ${e.signaler}\n\n`;
   });
@@ -511,28 +664,29 @@ function buildReport() {
   // Carretas
   t += `*Status das Carretas – Mina*\n\n`;
   DATA.carretas.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}\n`;
   });
 
   // Caminhões
   t += `\n*Status dos Caminhões – Mina / Turno*\n`;
   DATA.caminhoes.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}\n`;
   });
 
   // Guindauto
   t += `\n*Guindauto Sky Munck*\n`;
   DATA.guindauto.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator || ''}`.trimEnd() + `\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n`;
   });
 
   // Empilhadeiras
   t += `\n*Status das Empilhadeiras*\n`;
   DATA.empilhadeiras.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}\n`;
   });
 
   t += `\n*Legenda:*\n${E_GREEN} Com operador\n${E_YELLOW} Sem operador\n${E_RED} Manutenção Corretiva/preventiva`;
+  t += `\n${buildOperationalSummary()}`;
 
   return t;
 }
