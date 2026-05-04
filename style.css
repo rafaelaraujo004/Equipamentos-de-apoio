@@ -320,6 +320,7 @@ select:focus {
   grid-template-columns: 46px minmax(0, 1fr) 180px 44px;
   grid-template-areas:
     'status tag operator delete'
+    '. opname opname .'
     'sub sub sub sub'
     'support support support support';
   align-items: center;
@@ -397,6 +398,7 @@ select:focus {
 .equip-row .status-btn { grid-area: status; }
 .equip-row .equip-tag-input { grid-area: tag; }
 .equip-row .equip-operator { grid-area: operator; }
+.equip-row .equip-opname-wrapper { grid-area: opname; }
 .equip-row .equip-sub-input { grid-area: sub; min-width: 0; }
 .equip-row .equip-support-wrapper { grid-area: support; min-width: 0; }
 .equip-row .delete-btn {
@@ -499,6 +501,37 @@ select:focus {
   border-radius: 8px;
 }
 
+/* ── NOME DO OPERADOR ─────────────────────────────────── */
+.equip-opname-wrapper {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.equip-opname-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: rgba(29, 111, 255, .08);
+  border: 1px solid rgba(29, 111, 255, .28);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13px;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.equip-opname-input::placeholder { color: var(--muted); font-style: italic; }
+.equip-opname-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--input-focus-bg);
+  box-shadow: 0 0 0 3px rgba(29, 111, 255, .18);
+}
+/* Inline no g-line (guindastes) */
+.g-line .equip-opname-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ── LEGENDA ─────────────────────────────────────────── */
 .legend-list {
   display: flex;
@@ -566,6 +599,7 @@ select:focus {
     grid-template-areas:
       'status tag delete'
       'operator operator operator'
+      'opname opname opname'
       'sub sub sub'
       'support support support';
     align-items: center;
@@ -595,6 +629,16 @@ select:focus {
   .equip-row .equip-support-wrapper {
     grid-area: support;
     min-width: 0;
+  }
+
+  .equip-row .equip-opname-wrapper {
+    grid-area: opname;
+    min-width: 0;
+  }
+
+  /* Nome do operador em linha de guindaste (g-line) */
+  .g-line .equip-opname-wrapper {
+    grid-column: 1 / -1;
   }
 
   .equip-row .equip-support-input {

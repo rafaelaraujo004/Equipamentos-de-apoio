@@ -513,6 +513,29 @@ function createTagField(equip, statusField = 'status') {
   return input;
 }
 
+function createOperatorNameField(equip) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'equip-opname-wrapper';
+
+  const input = document.createElement('input');
+  input.type        = 'text';
+  input.className   = 'equip-opname-input';
+  input.placeholder = '\uD83D\uDC64 Nome do operador';
+  input.value       = equip.operatorName || '';
+  input.addEventListener('input', () => {
+    equip.operatorName = input.value;
+    scheduleSave();
+  });
+
+  wrapper.appendChild(input);
+
+  wrapper._update = () => {
+    wrapper.style.display = equip.operator === 'COM OPERADOR' ? '' : 'none';
+  };
+  wrapper._update();
+  return wrapper;
+}
+
 function createSupportTeamField(equip) {
   const dedicatedTeam = getDedicatedTeam(equip);
   const dedicatedSource = DEDICATED_SUPPORT_TEAMS[(equip.sub || '').trim()] && !DEDICATED_SUPPORT_TEAMS[(equip.tag || '').trim()]
@@ -901,14 +924,17 @@ function renderRow(equip, type, onDelete) {
     line2.className = 'g-line';
     opBtn = makeStatusBtn(equip, 'operatorStatus', (_, release) => { refreshVisualState(); release(); });
     opBtn.classList.add('status-btn-sm');
+    const opNameGnd = createOperatorNameField(equip);
     opSel = buildSelect(OP_OPTIONS, equip.operator, v => {
       equip.operator = v;
       equip.operatorStatus = getStatusFromOperator(v);
       equip.status = getStatusFromOperator(v);
+      opNameGnd._update();
       refreshVisualState();
     });
     line2.appendChild(opBtn);
     line2.appendChild(opSel);
+    line2.appendChild(opNameGnd);
 
     // Linha 3 — sinaleiro
     const line3 = document.createElement('div');
@@ -953,13 +979,16 @@ function renderRow(equip, type, onDelete) {
   row.appendChild(tagInput);
 
   if (equip.operator !== undefined) {
+    const opNameRow = createOperatorNameField(equip);
     opSel = buildSelect(OP_OPTIONS, equip.operator, v => {
       equip.operator = v;
       equip.status = getStatusFromOperator(v);
+      opNameRow._update();
       refreshVisualState();
     });
     opSel.className = 'equip-operator';
     row.appendChild(opSel);
+    row.appendChild(opNameRow);
   }
 
   const subInput = document.createElement('input');
@@ -1164,32 +1193,32 @@ function buildReport() {
   [...DATA.guindastes].sort(byStatus).forEach(e => {
     t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''}\n`;
     if (e.supportTeam) t += `- APOIO ${e.supportTeam}\n`;
-    t += `${e.operatorStatus} ${e.operator}\n`;
+    t += `${e.operatorStatus} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}\n`;
     t += `${e.signalerStatus} ${e.signaler}\n\n`;
   });
 
   // Carretas
   t += `*Status das Carretas – Mina*\n\n`;
   [...DATA.carretas].sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
   });
 
   // Caminhões
   t += `\n*Status dos Caminhões – Mina / Turno*\n`;
   [...DATA.caminhoes].filter(e => !e.onlyShifts || e.onlyShifts.includes(shift)).sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
   });
 
   // Guindauto
   t += `\n*Guindauto Sky Munck*\n`;
   [...DATA.guindauto].sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n`;
   });
 
   // Empilhadeiras
   t += `\n*Status das Empilhadeiras*\n`;
   [...DATA.empilhadeiras].sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
   });
 
   t += `\n*Legenda:*\n${E_GREEN} Com operador\n${E_YELLOW} Sem operador\n${E_RED} Manutenção Corretiva/preventiva`;
@@ -1396,6 +1425,7 @@ document.getElementById('toggleHistoryBtn').addEventListener('click', () => {
     historySec.style.display = '';
     metricsSec.style.display = 'none';
     renderHistory();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   } else {
     historySec.style.display = 'none';
   }
@@ -1409,6 +1439,7 @@ document.getElementById('toggleMetricsBtn').addEventListener('click', () => {
     metricsSec.style.display = '';
     historySec.style.display = 'none';
     renderMetrics();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   } else {
     metricsSec.style.display = 'none';
   }
