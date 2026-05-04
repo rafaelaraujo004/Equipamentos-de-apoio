@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Estado compartilhado em tempo real (leitura/escrita para todos autenticados)
+    match /current_state/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Histórico de relatórios (leitura/escrita para todos autenticados)
+    match /relatorio_history/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Snapshots de equipamentos (leitura/escrita para todos autenticados)
+    match /equipment_snapshots/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Eventos de equipamentos (criação para todos autenticados)
+    match /equipment_events/{docId} {
+      allow read, create: if request.auth != null;
+    }
+  }
+}

@@ -1,26 +1,63 @@
 // Função utilitária para extrair métricas de um relatório
 function extractMetricsFromReport(reportText) {
-  const E_G = String.fromCodePoint(0x1F7E2);
-  const E_Y = String.fromCodePoint(0x1F7E1);
   const E_R = String.fromCodePoint(0x1F534);
+  const E_Y = String.fromCodePoint(0x1F7E1);
+  const E_G = String.fromCodePoint(0x1F7E2);
+  let operacionais = 0, preventiva = 0, corretiva = 0, semOperador = 0;
+
   const lines = reportText.split('\n');
-  let operacionais = 0, inoperantes = 0, semOperador = 0;
-  for (const line of lines) {
-    // Considera apenas linhas que contêm uma tag de equipamento (1JA)
-    if (!/1JA/.test(line)) continue;
-    if (line.startsWith(E_R)) {
-      inoperantes++;
-    } else if (line.startsWith(E_Y)) {
-      semOperador++;
-    } else if (line.startsWith(E_G)) {
-      operacionais++;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Ignora linhas do Resumo Operacional (começam com dígito ou são cabeçalho)
+    if (/^\d/.test(line.trim())) continue;
+
+    const hasTag   = /1JA/.test(line);
+    const isRedLine = line.startsWith(E_R);
+    const isYellowLine = line.startsWith(E_Y);
+    const isGreenLine  = line.startsWith(E_G);
+
+    // Para carretas/caminhões/guindauto/empilhadeiras: status + tag + operador na mesma linha
+    if (hasTag) {
+      if (isRedLine) {
+        if (line.includes('MANUTENÇÃO PREVENTIVA')) preventiva++;
+        else if (line.includes('MANUTENÇÃO CORRETIVA')) corretiva++;
+        else operacionais++; // vermelho por outro motivo (ex: substituindo)
+      } else if (isYellowLine) {
+        if (line.includes('SEM OPERADOR')) semOperador++;
+        else operacionais++;
+      } else if (isGreenLine) {
+        operacionais++;
+      }
+      continue;
+    }
+
+    // Para guindastes: linha do operador vem separada (sem tag), começa com emoji
+    if (!hasTag && (isRedLine || isYellowLine)) {
+      if (isRedLine) {
+        if (line.includes('MANUTENÇÃO PREVENTIVA')) preventiva++;
+        else if (line.includes('MANUTENÇÃO CORRETIVA')) corretiva++;
+      } else if (isYellowLine && line.includes('SEM OPERADOR')) {
+        semOperador++;
+      }
     }
   }
-  return { operacionais, inoperantes, semOperador };
+
+  return { operacionais, preventiva, corretiva, semOperador };
 }
 
+// Estado do filtro de turno nas métricas
+let _metricsShiftFilter = 'all';
+
 // Busca histórico do Firebase e renderiza gráfico/tabela
-async function renderMetrics() {
+async function renderMetrics(shiftFilter) {
+  if (shiftFilter !== undefined) _metricsShiftFilter = shiftFilter;
+  const activeShift = _metricsShiftFilter || 'all';
+
+  // Atualiza visual dos botões
+  document.querySelectorAll('.shift-filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.shift === activeShift);
+  });
+
   const chartEl = document.getElementById('metricsChart');
   const tableWrapper = document.getElementById('metricsTableWrapper');
   // Buscar últimos relatórios do mês atual (ou usar histórico local)
@@ -55,21 +92,27 @@ async function renderMetrics() {
       }));
     }
   }
-  // Agrupar por dia
+  // Agrupar por dia – cada relatório fica na sua própria entrada (1 por turno)
+  // Chave: dia + turno para manter separados
   const daily = {};
   data.forEach(item => {
+    const shift = extractShiftFromReport(item.content) || '?';
     const day = item.date.toISOString().slice(0, 10);
-    if (!daily[day]) daily[day] = [];
-    daily[day].push(item.content);
+    const key = `${day}_${shift}`;
+    daily[key] = { day, shift, content: item.content };
   });
-  // Calcular métricas por dia
-  const days = Object.keys(daily).sort();
-  const metrics = days.map(day => {
-    // Pega o último relatório do dia
-    const lastReport = daily[day][daily[day].length - 1];
-    const m = extractMetricsFromReport(lastReport);
-    return { day, ...m };
-  });
+  // Calcular métricas por entrada
+  let metrics = Object.values(daily)
+    .sort((a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : a.shift.localeCompare(b.shift))
+    .map(entry => {
+      const m = extractMetricsFromReport(entry.content);
+      return { day: entry.day, shift: entry.shift, ...m };
+    });
+
+  // Aplicar filtro de turno
+  if (activeShift !== 'all') {
+    metrics = metrics.filter(m => m.shift === activeShift);
+  }
   if (!metrics.length) {
     chartEl.style.display = 'none';
     tableWrapper.innerHTML = '<p style="color:#e8edf7">Nenhum relatório disponível para este mês.</p>';
@@ -79,31 +122,33 @@ async function renderMetrics() {
   // Gráfico
   if (window.metricsChartInstance) window.metricsChartInstance.destroy();
   window.metricsChartInstance = new Chart(chartEl, {
-    type: 'line',
+    type: 'bar',
     data: {
-      labels: metrics.map(m => m.day.slice(8, 10) + '/' + m.day.slice(5, 7)),
+      labels: metrics.map(m => m.day.slice(8, 10) + '/' + m.day.slice(5, 7) + (activeShift === 'all' ? ` (${m.shift})` : '')),
       datasets: [
-        { label: 'Operacionais', data: metrics.map(m => m.operacionais), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', fill: false },
-        { label: 'Inoperantes', data: metrics.map(m => m.inoperantes), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.2)', fill: false },
-        { label: 'Sem Operador', data: metrics.map(m => m.semOperador), borderColor: '#eab308', backgroundColor: 'rgba(234,179,8,0.2)', fill: false },
+        { label: 'Operacionais',  data: metrics.map(m => m.operacionais), backgroundColor: 'rgba(34,197,94,0.7)',  borderColor: '#22c55e', borderWidth: 2 },
+        { label: 'Preventiva',    data: metrics.map(m => m.preventiva),   backgroundColor: 'rgba(234,179,8,0.7)',  borderColor: '#eab308', borderWidth: 2 },
+        { label: 'Corretiva',     data: metrics.map(m => m.corretiva),    backgroundColor: 'rgba(239,68,68,0.7)',  borderColor: '#ef4444', borderWidth: 2 },
+        { label: 'Sem Operador',  data: metrics.map(m => m.semOperador),  backgroundColor: 'rgba(148,163,184,0.6)', borderColor: '#94a3b8', borderWidth: 2 },
       ]
     },
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: '#e8edf7' } },
-        title: { display: true, text: 'Métricas diárias do mês', color: '#e8edf7' }
+        legend: { labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() } },
+        title: { display: true, text: 'Equipamentos por status (por dia)', color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() },
+        tooltip: { mode: 'index', intersect: false }
       },
       scales: {
-        x: { ticks: { color: '#e8edf7' }, grid: { color: '#22345a' } },
-        y: { beginAtZero: true, ticks: { color: '#e8edf7' }, grid: { color: '#22345a' } }
+        x: { stacked: false, ticks: { color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() }, grid: { color: getComputedStyle(document.documentElement).getPropertyValue('--border').trim() } },
+        y: { beginAtZero: true, ticks: { stepSize: 1, color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() }, grid: { color: getComputedStyle(document.documentElement).getPropertyValue('--border').trim() } }
       }
     }
   });
   // Tabela detalhada
-  let html = '<table class="metrics-table"><thead><tr><th>Data</th><th>Operacionais</th><th>Inoperantes</th><th>Sem Operador</th></tr></thead><tbody>';
+  let html = '<table class="metrics-table"><thead><tr><th>Data</th><th>🗃️ Turno</th><th>🟢 Operacionais</th><th>🟡 Preventiva</th><th>🔴 Corretiva</th><th>⚪ Sem Operador</th></tr></thead><tbody>';
   metrics.forEach(m => {
-    html += `<tr><td>${m.day.split('-').reverse().join('/')}</td><td>${m.operacionais}</td><td>${m.inoperantes}</td><td>${m.semOperador}</td></tr>`;
+    html += `<tr><td>${m.day.split('-').reverse().join('/')}</td><td>${m.shift || '-'}</td><td>${m.operacionais}</td><td>${m.preventiva}</td><td>${m.corretiva}</td><td>${m.semOperador}</td></tr>`;
   });
   html += '</tbody></table>';
   tableWrapper.innerHTML = html;
@@ -124,6 +169,21 @@ const E_RED    = String.fromCodePoint(0x1F534); // 🔴
 const STATUS_CYCLE  = [E_GREEN, E_YELLOW, E_RED];
 const OP_OPTIONS    = ['COM OPERADOR', 'SEM OPERADOR', 'OPERAÇÃO VALE', 'MANUTENÇÃO CORRETIVA', 'MANUTENÇÃO PREVENTIVA'];
 const SIG_OPTIONS   = ['COM SINALEIRO', 'SEM SINALEIRO'];
+
+// Equipamentos ADM: só visíveis (ativos) nos turnos A e C
+const ADM_TAGS = ['1JA405 - ADM', '1JA406 - ADM'];
+function isAdmShift() {
+  const s = document.getElementById('shiftSelect')?.value || '';
+  return s === 'A' || s === 'C';
+}
+// Retorna a equipe dedicada a um equipamento, verificando a TAG própria
+// e também a TAG que ele está substituindo (campo sub).
+function getDedicatedTeam(equip) {
+  return DEDICATED_SUPPORT_TEAMS[(equip.tag || '').trim()]
+      || DEDICATED_SUPPORT_TEAMS[(equip.sub || '').trim()]
+      || '';
+}
+
 const DEDICATED_SUPPORT_TEAMS = {
   '1JA343': 'GPA/TRUCKLESS PREVENTIVA',
   '1JA347': 'ESCAVAÇÃO',
@@ -140,6 +200,126 @@ let firebaseDb = null;
 let firebaseReady = false;
 let _saveTimer = null;
 
+// ── SINCRONIZAÇÃO EM TEMPO REAL ──────────────────────────────────────────────
+const SHARED_DOC = 'current_state/live';
+let _syncTimer = null;
+let _applyingRemoteUpdate = false;
+let _unsubscribeSharedState = null;
+
+function getFormFields() {
+  return {
+    reportDate:    document.getElementById('reportDate')?.value    || '',
+    shiftSelect:   document.getElementById('shiftSelect')?.value   || '',
+    weekdaySelect: document.getElementById('weekdaySelect')?.value || '',
+  };
+}
+
+function applyFormFields(form) {
+  if (!form) return;
+  const rd = document.getElementById('reportDate');
+  const ss = document.getElementById('shiftSelect');
+  const ws = document.getElementById('weekdaySelect');
+  if (form.reportDate    && rd) rd.value = form.reportDate;
+  if (form.shiftSelect   && ss) ss.value = form.shiftSelect;
+  if (form.weekdaySelect && ws) ws.value = form.weekdaySelect;
+}
+
+function applySharedState(d) {
+  if (!d) return;
+  const KEYS = ['guindastes', 'carretas', 'caminhoes', 'guindauto', 'empilhadeiras'];
+  let anyEquip = false;
+  KEYS.forEach(k => {
+    if (Array.isArray(d[k]) && d[k].length > 0) { DATA[k] = d[k]; anyEquip = true; }
+  });
+  if (anyEquip) renderAll();
+  if (d.form) {
+    applyFormFields(d.form);
+    renderAll(); // Reaplica classe adm-inactive com o turno atualizado
+  }
+}
+
+function setSyncStatus(state) {
+  // state: 'connecting' | 'synced' | 'syncing' | 'offline' | 'error'
+  const dot   = document.getElementById('syncDot');
+  const label = document.getElementById('syncLabel');
+  if (!dot || !label) return;
+  const map = {
+    connecting: { color: 'var(--muted)',   text: 'Conectando...' },
+    synced:     { color: 'var(--green)',   text: '● Sincronizado' },
+    syncing:    { color: 'var(--yellow)',  text: '↑ Sincronizando...' },
+    offline:    { color: 'var(--muted)',   text: 'Sem conexão' },
+    error:      { color: 'var(--red)',     text: '✕ Erro de sync' },
+  };
+  const s = map[state] || map.connecting;
+  dot.style.background = s.color;
+  label.style.color    = s.color;
+  label.textContent    = s.text;
+}
+
+function scheduleSharedStateSave() {
+  if (_applyingRemoteUpdate) return;
+  clearTimeout(_syncTimer);
+  setSyncStatus('syncing');
+  _syncTimer = setTimeout(pushSharedState, 1500);
+}
+
+async function pushSharedState() {
+  if (!firebaseDb) { setSyncStatus('offline'); return; }
+  try {
+    await firebaseDb.doc(SHARED_DOC).set({
+      guindastes:    DATA.guindastes,
+      carretas:      DATA.carretas,
+      caminhoes:     DATA.caminhoes,
+      guindauto:     DATA.guindauto,
+      empilhadeiras: DATA.empilhadeiras,
+      form: getFormFields(),
+      updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    setSyncStatus('synced');
+  } catch (err) {
+    console.error('Erro ao sincronizar com Firebase:', err);
+    setSyncStatus('error');
+  }
+}
+
+function subscribeSharedState() {
+  if (!firebaseDb || _unsubscribeSharedState) return;
+  _unsubscribeSharedState = firebaseDb.doc(SHARED_DOC).onSnapshot(snap => {
+    // Ignora eventos de escrita local (otimista) para evitar loop
+    if (!snap.exists || snap.metadata.hasPendingWrites) return;
+    _applyingRemoteUpdate = true;
+    applySharedState(snap.data());
+    _applyingRemoteUpdate = false;
+    setSyncStatus('synced');
+  }, err => {
+    console.error('Erro no listener do Firebase:', err);
+    setSyncStatus('error');
+  });
+}
+
+async function initSharedSync() {
+  if (!firebaseDb) { setSyncStatus('offline'); return; }
+  setSyncStatus('connecting');
+  // 1. Carrega estado atual (único para todos os dispositivos)
+  try {
+    const snap = await firebaseDb.doc(SHARED_DOC).get();
+    if (snap.exists) {
+      _applyingRemoteUpdate = true;
+      applySharedState(snap.data());
+      _applyingRemoteUpdate = false;
+    } else {
+      // Primeiro uso: publica o estado local como estado inicial compartilhado
+      await pushSharedState();
+    }
+    setSyncStatus('synced');
+  } catch (err) {
+    console.error('Erro ao carregar estado inicial do Firebase:', err);
+    setSyncStatus('error');
+  }
+  // 2. Escuta mudanças em tempo real
+  subscribeSharedState();
+}
+
 function saveData() {
   localStorage.setItem(DATA_STORAGE_KEY, JSON.stringify(DATA));
 }
@@ -147,6 +327,7 @@ function saveData() {
 function scheduleSave() {
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(saveData, 400);
+  scheduleSharedStateSave();
 }
 
 function loadSavedData() {
@@ -175,33 +356,32 @@ DATA = {
     { tag: '1JA221 (110t)*', status: E_GREEN, operatorStatus: E_GREEN,  operator: 'COM OPERADOR', signalerStatus: E_GREEN, signaler: 'COM SINALEIRO', sub: '' },
   ],
   carretas: [
-    { tag: '1JA268', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA273', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA259', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
+    { tag: '1JA268', status: E_GREEN, operator: 'COM OPERADOR', sub: '' },
+    { tag: '1JA273', status: E_GREEN, operator: 'COM OPERADOR', sub: '' },
   ],
   caminhoes: [
-    { tag: '1JA343', status: E_YELLOW, operator: 'SEM OPERADOR', sub: '' },
-    { tag: '1JA347', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA537', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA377', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA410', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA360', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA378', status: E_GREEN,  operator: 'SEM OPERADOR', sub: '' },
-    { tag: '1JA562', status: E_GREEN,  operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA348', status: E_RED,    operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA536', status: E_RED,    operator: 'COM OPERADOR', sub: '' },
-    { tag: '1JA339', status: E_RED,    operator: 'MANUTENÇÃO CORRETIVA', sub: '' },
+    { tag: '1JA340', status: E_GREEN, operator: 'COM OPERADOR', sub: '1JA343', supportTeam: 'ESTERIL' },
+    { tag: '1JA366', status: E_GREEN, operator: 'COM OPERADOR', sub: '1JA347', supportTeam: 'ESCAVAÇÃO' },
+    { tag: '1JA406 - ADM', status: E_GREEN, operator: 'COM OPERADOR', sub: '1JA537', supportTeam: 'SOTREQ', onlyShifts: ['A', 'C'] },
+    { tag: '1JA377', status: E_RED,   operator: 'MANUTENÇÃO CORRETIVA', sub: '', supportTeam: 'VULCANIZAÇÃO' },
+    { tag: '1JA410', status: E_GREEN, operator: 'COM OPERADOR', sub: '', supportTeam: 'PERFURAÇÃO' },
+    { tag: '1JA360', status: E_GREEN, operator: 'COM OPERADOR', sub: '', supportTeam: 'GPA/TRUCKLESS PREVENTIVA' },
+    { tag: '1JA378', status: E_RED,   operator: 'MANUTENÇÃO PREVENTIVA', sub: '' },
+    { tag: '1JA342', status: E_GREEN, operator: 'COM OPERADOR', sub: '', supportTeam: 'GPA/TRUCKLESS PREVENTIVA' },
+    { tag: '1JA405 - ADM', status: E_GREEN, operator: 'COM OPERADOR', sub: '1JA348', supportTeam: 'MATERIAIS', onlyShifts: ['A', 'C'] },
+    { tag: '1JA536', status: E_GREEN, operator: 'COM OPERADOR', sub: '', supportTeam: 'TRAKSHIFT' },
+    { tag: '1JA339', status: E_RED,   operator: 'MANUTENÇÃO CORRETIVA', sub: '' },
   ],
   guindauto: [
-    { tag: '1JA416', status: E_RED, operator: 'COM OPERADOR', sub: '' },
+    { tag: '1JA416', status: E_RED, operator: 'MANUTENÇÃO CORRETIVA', sub: '' },
   ],
   empilhadeiras: [
-    { tag: '1JA369 (16t)', status: E_GREEN, operator: 'OPERAÇÃO VALE', sub: '' },
-    { tag: '1JA373 (16t)',  status: E_GREEN, operator: 'COM OPERADOR',  sub: '' },
-    { tag: '1JA371 (16t)', status: E_GREEN, operator: 'OPERAÇÃO VALE', sub: '' },
-    { tag: '1JA374 (7t)',  status: E_GREEN, operator: 'COM OPERADOR',  sub: '' },
-    { tag: '1JA375 (10t)', status: E_RED,   operator: 'OPERAÇÃO VALE', sub: '' },
-    { tag: '1JA376 (10t)', status: E_GREEN, operator: 'COM OPERADOR',  sub: '' },
+    { tag: '1JA369 (16t)', status: E_GREEN, operator: 'OPERAÇÃO VALE',      sub: '' },
+    { tag: '1JA373 (16t)', status: E_GREEN, operator: 'COM OPERADOR',       sub: '' },
+    { tag: '1JA371 (16t)', status: E_GREEN, operator: 'OPERAÇÃO VALE',      sub: '' },
+    { tag: '1JA374 (7t)',  status: E_GREEN, operator: 'COM OPERADOR',       sub: '' },
+    { tag: '1JA375 (10t)', status: E_RED,   operator: 'MANUTENÇÃO CORRETIVA', sub: '' },
+    { tag: '1JA376 (10t)', status: E_GREEN, operator: 'COM OPERADOR',       sub: '' },
   ],
 };
 
@@ -223,6 +403,25 @@ if ('serviceWorker' in navigator) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // ── TEMA CLARO/ESCURO ──────────────────────────────────
+  const html = document.documentElement;
+  const themeBtn = document.getElementById('themeToggleBtn');
+  const savedTheme = localStorage.getItem('xcmg-theme') || 'dark';
+  html.dataset.theme = savedTheme;
+  if (themeBtn) themeBtn.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+      html.dataset.theme = next;
+      localStorage.setItem('xcmg-theme', next);
+      themeBtn.textContent = next === 'dark' ? '☀️' : '🌙';
+      // Recarrega gráfico se estiver visível
+      const metricsSec = document.getElementById('metricsSection');
+      if (metricsSec && metricsSec.style.display !== 'none') renderMetrics();
+    });
+  }
+
   const banner = document.getElementById('installBanner');
   const installBtn = document.getElementById('installBtn');
   const closeBtn = document.getElementById('closeInstallBanner');
@@ -272,18 +471,53 @@ function updateTagEditState(input, isEditable) {
     : 'A TAG só pode ser editada quando o equipamento estiver em vermelho';
 }
 
+function normalizeTag(tag) {
+  return String(tag || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function isDuplicateTag(tag, currentEquip = null) {
+  const normalized = normalizeTag(tag);
+  if (!normalized) return false;
+
+  const groups = ['guindastes', 'carretas', 'caminhoes', 'guindauto', 'empilhadeiras'];
+  return groups.some(group =>
+    (DATA[group] || []).some(e => e !== currentEquip && normalizeTag(e.tag) === normalized)
+  );
+}
+
 function createTagField(equip, statusField = 'status') {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'equip-tag-input';
   input.value = equip.tag;
-  input.addEventListener('input', () => { equip.tag = input.value.trim() || equip.tag; scheduleSave(); });
+  input.addEventListener('change', () => {
+    const nextTag = input.value.trim();
+    const previousTag = equip.tag;
+
+    if (!nextTag) {
+      input.value = previousTag || '';
+      return;
+    }
+
+    if (normalizeTag(nextTag) !== normalizeTag(previousTag) && isDuplicateTag(nextTag, equip)) {
+      window.alert(`A TAG ${nextTag} ja existe na lista. Escolha outra TAG.`);
+      input.value = previousTag || '';
+      return;
+    }
+
+    equip.tag = nextTag;
+    input.value = nextTag;
+    scheduleSave();
+  });
   updateTagEditState(input, equip[statusField] === E_RED);
   return input;
 }
 
 function createSupportTeamField(equip) {
-  const dedicatedTeam = DEDICATED_SUPPORT_TEAMS[equip.tag] || '';
+  const dedicatedTeam = getDedicatedTeam(equip);
+  const dedicatedSource = DEDICATED_SUPPORT_TEAMS[(equip.sub || '').trim()] && !DEDICATED_SUPPORT_TEAMS[(equip.tag || '').trim()]
+    ? (equip.sub || '').trim()
+    : (equip.tag || '').trim();
   if (!equip.supportTeam && dedicatedTeam) {
     equip.supportTeam = dedicatedTeam;
   }
@@ -332,8 +566,11 @@ function createSupportTeamField(equip) {
   if (dedicatedTeam) {
     const badge = document.createElement('span');
     badge.className = 'equip-support-badge';
-    badge.textContent = `🔒 Dedicado: ${dedicatedTeam}`;
-    badge.title = `Equipe dedicada fixa do equipamento ${equip.tag}`;
+    const sourceLabel = dedicatedSource !== (equip.tag || '').trim()
+      ? `${dedicatedSource} (substituído)`
+      : dedicatedSource;
+    badge.textContent = `🔒 Dedicado: ${dedicatedTeam} — ${sourceLabel}`;
+    badge.title = `Equipe dedicada fixa do equipamento ${dedicatedSource}`;
     wrapper.appendChild(badge);
   }
 
@@ -373,6 +610,7 @@ async function initFirebase() {
     firebaseReady = true;
     flushPendingEvents();
     flushPendingHistoryItems();
+    initSharedSync();
   } catch (err) {
     console.error('Falha ao inicializar Firebase:', err);
     firebaseDb = null;
@@ -470,40 +708,45 @@ async function saveSnapshotToFirebase() {
   const btn      = document.getElementById('saveFirebaseBtn');
 
   if (!firebaseDb) {
-    statusEl.style.color = '#ef4444';
+    statusEl.style.color = 'var(--red)';
     statusEl.textContent = '⚠️ Firebase não conectado. Verifique as credenciais.';
     return;
   }
 
   btn.disabled     = true;
-  btn.textContent  = '⏳ Salvando...';
+  btn.textContent  = '⏳ Publicando...';
   statusEl.textContent = '';
 
-  const snapshot = {
-    savedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
-    clientSavedAt: new Date().toISOString(),
-    guindastes:    DATA.guindastes,
-    carretas:      DATA.carretas,
-    caminhoes:     DATA.caminhoes,
-    guindauto:     DATA.guindauto,
-    empilhadeiras: DATA.empilhadeiras,
-  };
-
   try {
-    await firebaseDb.collection('equipment_snapshots').add(snapshot);
-    btn.textContent      = '✅ Salvo!';
-    statusEl.style.color = '#22c55e';
-    statusEl.textContent = `Salvo em ${new Date().toLocaleString()}`;
+    // Força publicação imediata do estado compartilhado (sem debounce)
+    clearTimeout(_syncTimer);
+    await pushSharedState();
+
+    // Também salva snapshot histórico
+    await firebaseDb.collection('equipment_snapshots').add({
+      savedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
+      clientSavedAt: new Date().toISOString(),
+      guindastes:    DATA.guindastes,
+      carretas:      DATA.carretas,
+      caminhoes:     DATA.caminhoes,
+      guindauto:     DATA.guindauto,
+      empilhadeiras: DATA.empilhadeiras,
+    });
+
+    btn.textContent      = '✅ Publicado!';
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = `Sincronizado com todos os dispositivos em ${new Date().toLocaleString()}`;
   } catch (err) {
-    console.error('Erro ao salvar snapshot:', err);
-    btn.textContent      = '☁️ Salvar no Firebase';
-    statusEl.style.color = '#ef4444';
-    statusEl.textContent = '❌ Falha ao salvar. Tente novamente.';
+    console.error('Erro ao publicar estado:', err);
+    btn.textContent      = '☁️ Publicar para todos';
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '❌ Falha ao publicar. Tente novamente.';
   } finally {
     btn.disabled = false;
     setTimeout(() => {
-      if (btn.textContent === '✅ Salvo!') btn.textContent = '☁️ Salvar no Firebase';
-    }, 3000);
+      if (btn.textContent === '✅ Publicado!') btn.textContent = '☁️ Publicar para todos';
+      statusEl.textContent = '';
+    }, 4000);
   }
 }
 
@@ -537,17 +780,65 @@ function syncStatusButton(button, status) {
 
 // ── Renderização de uma linha de equipamento ────────────────────────────────────
 
+// Quando o botão principal de status muda: amarelo → SEM OPERADOR, vermelho → pergunta tipo
+function handleMainStatusChange(next, equip, getOpSel, refresh, release) {
+  if (next === E_GREEN) {
+    equip.operator = 'COM OPERADOR';
+    equip.operatorStatus = E_GREEN;
+    const sel = getOpSel();
+    if (sel) sel.value = 'COM OPERADOR';
+    refresh();
+    release(200);
+  } else if (next === E_YELLOW) {
+    equip.operator = 'SEM OPERADOR';
+    equip.operatorStatus = E_YELLOW;
+    const sel = getOpSel();
+    if (sel) sel.value = 'SEM OPERADOR';
+    refresh();
+    release(200);
+  } else if (next === E_RED) {
+    // Adia o confirm para o próximo tick, evitando passthrough de touch
+    setTimeout(() => {
+      const isPreventiva = window.confirm(
+        'Qual tipo de manutenção?\n\nOK → MANUTENÇÃO PREVENTIVA\nCancelar → MANUTENÇÃO CORRETIVA'
+      );
+      const tipo = isPreventiva ? 'MANUTENÇÃO PREVENTIVA' : 'MANUTENÇÃO CORRETIVA';
+      equip.operator = tipo;
+      equip.operatorStatus = E_RED;
+      const sel = getOpSel();
+      if (sel) sel.value = tipo;
+      refresh();
+      // 400ms de buffer após o confirm fechar para absorver ghost touches
+      release(400);
+    }, 50);
+    // release será chamado dentro do setTimeout acima
+  }
+}
+
 function makeStatusBtn(equip, field, onChange) {
   const btn = document.createElement('button');
   btn.className = 'status-btn';
   btn.title = 'Clique para alterar';
   btn.type = 'button';
   syncStatusButton(btn, equip[field]);
+  // busy e release são por-botão (closure) — sem estado global compartilhado
+  let busy = false;
+  const release = (delay = 150) => setTimeout(() => { busy = false; }, delay);
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); // evita ghost click / duplo disparo em touch
+  });
   btn.addEventListener('click', () => {
-    const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(equip[field]) + 1) % STATUS_CYCLE.length];
+    if (busy) return;
+    busy = true;
+    const idx = STATUS_CYCLE.indexOf(equip[field]);
+    const next = STATUS_CYCLE[(idx < 0 ? 0 : idx + 1) % STATUS_CYCLE.length];
     equip[field] = next;
     syncStatusButton(btn, next);
-    if (onChange) onChange(next);
+    if (onChange) {
+      onChange(next, release);
+    } else {
+      release();
+    }
   });
   return btn;
 }
@@ -574,14 +865,22 @@ function renderRow(equip, type, onDelete) {
       scheduleSave();
     };
 
-    const equipBtn = makeStatusBtn(equip, 'status', refreshVisualState);
+    let opSel;
+    const equipBtn = makeStatusBtn(equip, 'status', (next, release) => {
+      handleMainStatusChange(next, equip, () => opSel, refreshVisualState, release);
+    });
     const subInput = document.createElement('input');
     subInput.type        = 'text';
     subInput.className   = 'equip-sub-input';
     subInput.placeholder = '↔ Substitui (ex: 1JA339)';
     subInput.value       = equip.sub || '';
     subInput.title       = 'Preencha se este equipamento está substituindo outra tag em manutenção';
-    subInput.addEventListener('input', () => { equip.sub = subInput.value.trim(); scheduleSave(); });
+    subInput.addEventListener('input', () => {
+      equip.sub = subInput.value.trim();
+      const old = card.querySelector('.equip-support-wrapper');
+      if (old) card.replaceChild(createSupportTeamField(equip), old);
+      scheduleSave();
+    });
     line1.appendChild(equipBtn);
     line1.appendChild(tagInput);
     line1.appendChild(subInput);
@@ -600,9 +899,9 @@ function renderRow(equip, type, onDelete) {
     // Linha 2 — operador
     const line2 = document.createElement('div');
     line2.className = 'g-line';
-    opBtn = makeStatusBtn(equip, 'operatorStatus', refreshVisualState);
+    opBtn = makeStatusBtn(equip, 'operatorStatus', (_, release) => { refreshVisualState(); release(); });
     opBtn.classList.add('status-btn-sm');
-    const opSel = buildSelect(OP_OPTIONS, equip.operator, v => {
+    opSel = buildSelect(OP_OPTIONS, equip.operator, v => {
       equip.operator = v;
       equip.operatorStatus = getStatusFromOperator(v);
       equip.status = getStatusFromOperator(v);
@@ -614,7 +913,7 @@ function renderRow(equip, type, onDelete) {
     // Linha 3 — sinaleiro
     const line3 = document.createElement('div');
     line3.className = 'g-line';
-    sigBtn = makeStatusBtn(equip, 'signalerStatus', refreshVisualState);
+    sigBtn = makeStatusBtn(equip, 'signalerStatus', (_, release) => { refreshVisualState(); release(); });
     sigBtn.classList.add('status-btn-sm');
     const sigSel = buildSelect(SIG_OPTIONS, equip.signaler, v => {
       equip.signaler = v;
@@ -646,12 +945,15 @@ function renderRow(equip, type, onDelete) {
     scheduleSave();
   };
 
-  const btn = makeStatusBtn(equip, 'status', refreshVisualState);
+  let opSel;
+  const btn = makeStatusBtn(equip, 'status', (next, release) => {
+    handleMainStatusChange(next, equip, () => opSel, refreshVisualState, release);
+  });
   row.appendChild(btn);
   row.appendChild(tagInput);
 
   if (equip.operator !== undefined) {
-    const opSel = buildSelect(OP_OPTIONS, equip.operator, v => {
+    opSel = buildSelect(OP_OPTIONS, equip.operator, v => {
       equip.operator = v;
       equip.status = getStatusFromOperator(v);
       refreshVisualState();
@@ -666,7 +968,12 @@ function renderRow(equip, type, onDelete) {
   subInput.placeholder = '↔ Substitui (ex: 1JA339)';
   subInput.value       = equip.sub || '';
   subInput.title       = 'Preencha se este equipamento está substituindo outra tag em manutenção';
-  subInput.addEventListener('input', () => { equip.sub = subInput.value.trim(); scheduleSave(); });
+  subInput.addEventListener('input', () => {
+    equip.sub = subInput.value.trim();
+    const old = row.querySelector('.equip-support-wrapper');
+    if (old) row.replaceChild(createSupportTeamField(equip), old);
+    scheduleSave();
+  });
   row.appendChild(subInput);
 
   const supportInput = createSupportTeamField(equip);
@@ -686,100 +993,156 @@ function renderRow(equip, type, onDelete) {
   return row;
 }
 
-function renderSection(listId, items, type) {
+function renderSection(listId, items, type, filterFn, postRenderFn, sortFn) {
   const container = document.getElementById(listId);
   container.innerHTML = '';
-  items.forEach((item, idx) => {
+  let display = items.filter((_, i) => !filterFn || filterFn(items[i]));
+  if (sortFn) display = [...display].sort(sortFn);
+  display.forEach(item => {
     const handleDelete = () => {
       const label = item.tag ? ` o equipamento ${item.tag}` : ' este equipamento';
       const confirmed = window.confirm(`Deseja realmente excluir${label}?`);
       if (!confirmed) return;
       logEquipmentEvent('deleted', type, item);
-      items.splice(idx, 1);
+      const realIdx = items.indexOf(item);
+      if (realIdx !== -1) items.splice(realIdx, 1);
       renderAll();
     };
-    container.appendChild(renderRow(item, type, handleDelete));
+    const el = renderRow(item, type, handleDelete);
+    if (postRenderFn) postRenderFn(el, item);
+    container.appendChild(el);
   });
+}
+
+function setSectionCount(titleId, count) {
+  const h2 = document.getElementById(titleId);
+  if (!h2) return;
+  let badge = h2.querySelector('.section-count');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'section-count';
+    h2.appendChild(badge);
+  }
+  badge.textContent = count;
 }
 
 function renderAll() {
   saveData();
+  const shift = document.getElementById('shiftSelect')?.value || '';
+  const admShift = shift === 'A' || shift === 'C';
+
   renderSection('list-guindastes',    DATA.guindastes,    'guindastes');
+  setSectionCount('title-guindastes', DATA.guindastes.length);
+
   renderSection('list-carretas',      DATA.carretas,      'carretas');
-  renderSection('list-caminhoes',     DATA.caminhoes,     'caminhoes');
+  setSectionCount('title-carretas', DATA.carretas.length);
+
+  // Ordenação: dedicados primeiro, ADM por último
+  const caminhoesSort = (a, b) => {
+    const aAdm = ADM_TAGS.includes((a.tag || '').trim());
+    const bAdm = ADM_TAGS.includes((b.tag || '').trim());
+    const aDed = !!getDedicatedTeam(a);
+    const bDed = !!getDedicatedTeam(b);
+    if (aAdm !== bAdm) return aAdm ? 1 : -1;  // ADM vai para o fim
+    if (aDed !== bDed) return aDed ? -1 : 1;  // Dedicado vai para o início
+    return 0;
+  };
+
+  const caminhoesFilter = c => !c.onlyShifts || c.onlyShifts.includes(shift);
+  renderSection('list-caminhoes',     DATA.caminhoes,     'caminhoes',
+    caminhoesFilter,
+    (el, item) => {
+      if (ADM_TAGS.includes((item.tag || '').trim()) && !admShift && !item.sub) {
+        el.classList.add('adm-inactive');
+      }
+    },
+    caminhoesSort);
+  setSectionCount('title-caminhoes', DATA.caminhoes.filter(caminhoesFilter).length);
+
   renderSection('list-guindauto',     DATA.guindauto,     'guindauto');
+  setSectionCount('title-guindauto', DATA.guindauto.length);
+
   renderSection('list-empilhadeiras', DATA.empilhadeiras, 'empilhadeiras');
+  setSectionCount('title-empilhadeiras', DATA.empilhadeiras.length);
+
+  updateAdmButtons();
 }
 
 // ── Construção do texto do relatório ───────────────────────────────────────────
 
 const REPORT_TYPE_LABELS = {
   guindastes: {
-    preventive: ['guindaste em preventiva', 'guindastes em preventiva'],
-    corrective: ['guindaste em corretiva', 'guindastes em corretiva'],
-    noOperator: ['guindaste', 'guindastes'],
+    preventive:   ['guindaste em preventiva', 'guindastes em preventiva'],
+    corrective:   ['guindaste em corretiva',  'guindastes em corretiva'],
+    noOperator:   ['guindaste', 'guindastes'],
+    operational:  ['guindaste operacional', 'guindastes operacionais'],
   },
   carretas: {
-    preventive: ['carreta em preventiva', 'carretas em preventiva'],
-    corrective: ['carreta em corretiva', 'carretas em corretiva'],
-    noOperator: ['carreta', 'carretas'],
+    preventive:   ['carreta em preventiva',  'carretas em preventiva'],
+    corrective:   ['carreta em corretiva',   'carretas em corretiva'],
+    noOperator:   ['carreta', 'carretas'],
+    operational:  ['carreta operacional', 'carretas operacionais'],
   },
   caminhoes: {
-    preventive: ['caminhão em preventiva', 'caminhões em preventiva'],
-    corrective: ['caminhão em corretiva', 'caminhões em corretiva'],
-    noOperator: ['caminhão', 'caminhões'],
+    preventive:   ['caminhão em preventiva', 'caminhões em preventiva'],
+    corrective:   ['caminhão em corretiva',  'caminhões em corretiva'],
+    noOperator:   ['caminhão', 'caminhões'],
+    operational:  ['caminhão operacional', 'caminhões operacionais'],
   },
   guindauto: {
-    preventive: ['munk em preventiva', 'munks em preventiva'],
-    corrective: ['munk em corretiva', 'munks em corretiva'],
-    noOperator: ['munk', 'munks'],
+    preventive:   ['Sky Munck em preventiva', 'Sky Munck em preventiva'],
+    corrective:   ['Sky Munck em corretiva',  'Sky Munck em corretiva'],
+    noOperator:   ['Sky Munck', 'Sky Munck'],
+    operational:  ['Sky Munck operacional', 'Sky Munck operacionais'],
   },
   empilhadeiras: {
-    preventive: ['empilhadeira em preventiva', 'empilhadeiras em preventiva'],
-    corrective: ['empilhadeira em corretiva', 'empilhadeiras em corretiva'],
-    noOperator: ['empilhadeira', 'empilhadeiras'],
+    preventive:   ['empilhadeira em preventiva', 'empilhadeiras em preventiva'],
+    corrective:   ['empilhadeira em corretiva',  'empilhadeiras em corretiva'],
+    noOperator:   ['empilhadeira', 'empilhadeiras'],
+    operational:  ['empilhadeira operacional', 'empilhadeiras operacionais'],
   },
 };
 
 function buildOperationalSummary() {
   const lines = [];
+  const OP_OK = ['COM OPERADOR', 'OPERAÇÃO VALE'];
+  const shift = document.getElementById('shiftSelect')?.value || '';
+
   const sections = [
-    ['guindastes', DATA.guindastes],
-    ['carretas', DATA.carretas],
-    ['caminhoes', DATA.caminhoes],
-    ['guindauto', DATA.guindauto],
+    ['guindastes',    DATA.guindastes],
+    ['carretas',      DATA.carretas],
+    ['caminhoes',     DATA.caminhoes.filter(c => !c.onlyShifts || c.onlyShifts.includes(shift))],
+    ['guindauto',     DATA.guindauto],
     ['empilhadeiras', DATA.empilhadeiras],
   ];
 
   for (const [type, items] of sections) {
-    const labels = REPORT_TYPE_LABELS[type];
-    const preventive = items.filter(item => item.operator === 'MANUTENÇÃO PREVENTIVA');
-    const corrective = items.filter(item => item.operator === 'MANUTENÇÃO CORRETIVA');
-    const noOperator = items.filter(item => item.operator === 'SEM OPERADOR');
+    if (!items.length) continue;
+    const labels     = REPORT_TYPE_LABELS[type];
+    const preventive = items.filter(i => i.operator === 'MANUTENÇÃO PREVENTIVA');
+    const corrective = items.filter(i => i.operator === 'MANUTENÇÃO CORRETIVA');
+    const noOperator = items.filter(i => i.operator === 'SEM OPERADOR');
+    const operational= items.filter(i => OP_OK.includes(i.operator));
 
-    const formatTags = (list) => `(${list.map(item => item.tag).join(' - ')})`;
+    const formatTags = list => `(${list.map(i => i.tag).join(' - ')})`;
+    const n1 = n => n > 1 ? 1 : 0;
 
+    if (operational.length) {
+      lines.push(`${operational.length} ${labels.operational[n1(operational.length)]} ${formatTags(operational)}`);
+    }
     if (preventive.length) {
-      lines.push(
-        `${preventive.length} ${labels.preventive[preventive.length > 1 ? 1 : 0]} ${formatTags(preventive)}`
-      );
+      lines.push(`${preventive.length} ${labels.preventive[n1(preventive.length)]} ${formatTags(preventive)}`);
     }
-
     if (corrective.length) {
-      lines.push(
-        `${corrective.length} ${labels.corrective[corrective.length > 1 ? 1 : 0]} ${formatTags(corrective)}`
-      );
+      lines.push(`${corrective.length} ${labels.corrective[n1(corrective.length)]} ${formatTags(corrective)}`);
     }
-
     if (noOperator.length) {
-      lines.push(
-        `${noOperator.length} ${noOperator.length > 1 ? 'operadores a menos de' : 'operador a menos de'} ${labels.noOperator[noOperator.length > 1 ? 1 : 0]} ${formatTags(noOperator)}`
-      );
+      lines.push(`${noOperator.length} ${noOperator.length > 1 ? 'operadores a menos de' : 'operador a menos de'} ${labels.noOperator[n1(noOperator.length)]} ${formatTags(noOperator)}`);
     }
   }
 
   if (!lines.length) {
-    lines.push('Nenhum equipamento sem operador, em preventiva ou em corretiva.');
+    lines.push('Nenhum equipamento registrado.');
   }
 
   return `\n*Resumo Operacional*\n${lines.join('\n')}`;
@@ -790,39 +1153,43 @@ function buildReport() {
   const shift = document.getElementById('shiftSelect').value;
   const day   = document.getElementById('weekdaySelect').value;
 
+  // Ordena por status: verde → amarelo → vermelho
+  const STATUS_ORDER = { [E_GREEN]: 0, [E_YELLOW]: 1, [E_RED]: 2 };
+  const byStatus = (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
+
   let t = `*Status XCMG MINA ${date}*\n\nTURNO ${shift}\n\n${day}\n\n`;
 
   // Guindastes
   t += `\n*Posicionamento dos Guindastes*\n`;
-  DATA.guindastes.forEach(e => {
+  [...DATA.guindastes].sort(byStatus).forEach(e => {
     t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''}\n`;
-    if (e.supportTeam) t += `APOIO ${e.supportTeam}\n`;
+    if (e.supportTeam) t += `- APOIO ${e.supportTeam}\n`;
     t += `${e.operatorStatus} ${e.operator}\n`;
     t += `${e.signalerStatus} ${e.signaler}\n\n`;
   });
 
   // Carretas
   t += `*Status das Carretas – Mina*\n\n`;
-  DATA.carretas.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}\n`;
+  [...DATA.carretas].sort(byStatus).forEach(e => {
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
   });
 
   // Caminhões
   t += `\n*Status dos Caminhões – Mina / Turno*\n`;
-  DATA.caminhoes.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}\n`;
+  [...DATA.caminhoes].filter(e => !e.onlyShifts || e.onlyShifts.includes(shift)).sort(byStatus).forEach(e => {
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
   });
 
   // Guindauto
   t += `\n*Guindauto Sky Munck*\n`;
-  DATA.guindauto.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n`;
+  [...DATA.guindauto].sort(byStatus).forEach(e => {
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n`;
   });
 
   // Empilhadeiras
   t += `\n*Status das Empilhadeiras*\n`;
-  DATA.empilhadeiras.forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' APOIO ' + e.supportTeam : ''}\n`;
+  [...DATA.empilhadeiras].sort(byStatus).forEach(e => {
+    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
   });
 
   t += `\n*Legenda:*\n${E_GREEN} Com operador\n${E_YELLOW} Sem operador\n${E_RED} Manutenção Corretiva/preventiva`;
@@ -838,15 +1205,31 @@ function getHistory() {
 function saveHistory(arr) {
   localStorage.setItem('relatorioHistory', JSON.stringify(arr));
 }
-function addToHistory(report) {
+
+// Extrai a letra do turno do texto do relatório (linha "TURNO X")
+function extractShiftFromReport(content) {
+  const m = (content || '').match(/TURNO\s+([A-D])/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+// Adiciona ou sobrescreve entrada do histórico (1 por turno)
+// overwrite=true substitui a entrada existente do mesmo turno
+function addToHistory(report, overwrite) {
   const arr = getHistory();
-  const alreadyExists = arr.some(item => item.content === report);
-  if (alreadyExists) return;
+  const shift = extractShiftFromReport(report);
+  const existingIdx = shift ? arr.findIndex(i => extractShiftFromReport(i.content) === shift) : -1;
+
+  if (existingIdx !== -1 && !overwrite) return; // já existe, não substituir sem confirmação
+
   const item = {
     dateLabel: new Date().toLocaleString(),
     date: new Date().toISOString(),
     content: report
   };
+
+  if (existingIdx !== -1) {
+    arr.splice(existingIdx, 1); // remove a entrada antiga do mesmo turno
+  }
   arr.unshift(item);
   saveHistory(arr);
   saveHistoryToFirebase(item);
@@ -906,6 +1289,19 @@ function renderHistory() {
 }
 
 // ── Eventos ────────────────────────────────────────────────────────────────────
+
+// Controla visibilidade dos botões ADM e impede duplicatas
+function updateAdmButtons() {
+  const adm = isAdmShift();
+  ADM_TAGS.forEach(tag => {
+    const id = tag === '1JA405 - ADM' ? 'addAdm405Btn' : 'addAdm406Btn';
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const alreadyInList = isDuplicateTag(tag);
+    btn.style.display = (adm && !alreadyInList) ? '' : 'none';
+  });
+}
+
 // Adicionar novos equipamentos
 document.getElementById('addGuindasteBtn').addEventListener('click', () => {
   const item = { tag: '', status: E_GREEN, operatorStatus: E_GREEN, operator: 'COM OPERADOR', signalerStatus: E_GREEN, signaler: 'COM SINALEIRO', sub: '' };
@@ -925,6 +1321,21 @@ document.getElementById('addCaminhaoBtn').addEventListener('click', () => {
   logEquipmentEvent('added', 'caminhoes', item);
   renderAll();
 });
+
+// Botões ADM – adicionam equipamento fixo se não estiver na lista
+['1JA405 - ADM', '1JA406 - ADM'].forEach(tag => {
+  const id = tag === '1JA405 - ADM' ? 'addAdm405Btn' : 'addAdm406Btn';
+  document.getElementById(id)?.addEventListener('click', () => {
+    if (isDuplicateTag(tag)) {
+      window.alert(`A TAG ${tag} ja existe na lista.`);
+      return;
+    }
+    const item = { tag, status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+    DATA.caminhoes.push(item);
+    logEquipmentEvent('added', 'caminhoes', item);
+    renderAll();
+  });
+});
 document.getElementById('addGuindautoBtn').addEventListener('click', () => {
   const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
   DATA.guindauto.push(item);
@@ -943,18 +1354,36 @@ document.getElementById('generateBtn').addEventListener('click', () => {
   out.textContent = report;
   out.classList.remove('hidden');
   out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
   const arr = getHistory();
-  const isDuplicate = arr.some(item => item.content === report);
-  if (isDuplicate) {
-    const statusEl = document.getElementById('saveFirebaseStatus');
-    if (statusEl) {
-      statusEl.style.color = '#eab308';
-      statusEl.textContent = '⚠️ Este relatório já estava no histórico. Nenhuma duplicata salva.';
-      setTimeout(() => { statusEl.textContent = ''; }, 3500);
+  const shift = extractShiftFromReport(report);
+  const existing = shift ? arr.find(i => extractShiftFromReport(i.content) === shift) : null;
+
+  const statusEl = document.getElementById('saveFirebaseStatus');
+  function showStatus(color, msg) {
+    if (!statusEl) return;
+    statusEl.style.color = color;
+    statusEl.textContent = msg;
+    setTimeout(() => { statusEl.textContent = ''; }, 4000);
+  }
+
+  if (existing && existing.content === report) {
+    showStatus('#eab308', '⚠️ Relatório idêntico ao do Turno ' + shift + ' já salvo. Nenhuma alteração.');
+  } else if (existing) {
+    const confirm = window.confirm(
+      `Já existe um relatório salvo para o Turno ${shift} (gerado em ${existing.dateLabel}).\n\nDeseja sobrescrever com o relatório atual?`
+    );
+    if (confirm) {
+      addToHistory(report, true);
+      showStatus('#22c55e', '✅ Relatório do Turno ' + shift + ' sobrescrito com sucesso.');
+    } else {
+      showStatus('#eab308', '⚠️ Relatório do Turno ' + shift + ' mantido sem alteração.');
     }
   } else {
-    addToHistory(report);
+    addToHistory(report, false);
+    showStatus('#22c55e', '✅ Relatório do Turno ' + (shift || '?') + ' salvo no histórico.');
   }
+
   renderHistory();
 });
 // Botão para alternar aba de histórico
@@ -983,6 +1412,11 @@ document.getElementById('toggleMetricsBtn').addEventListener('click', () => {
   } else {
     metricsSec.style.display = 'none';
   }
+});
+
+// Filtros de turno nas métricas
+document.querySelectorAll('.shift-filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => renderMetrics(btn.dataset.shift));
 });
 
 // Exportar histórico
@@ -1045,13 +1479,26 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
 
   // Turno padrão sempre "C"
   document.getElementById('shiftSelect').value = 'C';
+
+  // Sincroniza cabeçalho com Firebase ao mudar
+  ['reportDate', 'shiftSelect', 'weekdaySelect'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => scheduleSharedStateSave());
+  });
+
+  // Ao mudar turno: re-renderiza caminhões (ativa/desativa ADM) e atualiza botões
+  document.getElementById('shiftSelect')?.addEventListener('change', () => renderAll());
 })();
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 initFirebase();
 flushPendingEvents();
-window.addEventListener('online', flushPendingEvents);
+window.addEventListener('online', () => {
+  setSyncStatus('connecting');
+  flushPendingEvents();
+  initSharedSync();
+});
+window.addEventListener('offline', () => setSyncStatus('offline'));
 loadSavedData();
 renderAll();
 

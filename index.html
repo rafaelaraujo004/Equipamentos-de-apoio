@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -19,6 +19,10 @@
   <header>
     <div class="header-inner">
       <span class="logo">Status XCMG – Mina</span>
+      <span id="syncIndicator" style="margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+        <span id="syncDot" style="width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;"></span>
+        <span id="syncLabel">Conectando...</span>
+      </span>
     </div>
   </header>
 
@@ -34,12 +38,21 @@
       <ul id="historyList" style="max-height:300px;overflow:auto;padding:0;list-style:none;"></ul>
     </section>
     <div style="display:flex;gap:8px;position:fixed;top:16px;right:16px;z-index:1001;">
+      <button id="themeToggleBtn" class="btn btn-secondary" title="Alternar tema" style="font-size:18px;padding:8px 12px;">☀️</button>
       <button id="toggleHistoryBtn" class="btn btn-secondary">📚 Histórico</button>
       <button id="toggleMetricsBtn" class="btn btn-secondary">📊 Métricas</button>
     </div>
     <!-- MÉTRICAS MENSAIS -->
     <section class="card" id="metricsSection" style="display:none;">
       <h2 class="section-title">📊 Métricas Mensais</h2>
+      <div class="shift-filter-row">
+        <span class="shift-filter-label">Filtrar por turno:</span>
+        <button class="shift-filter-btn active" data-shift="all">Todos</button>
+        <button class="shift-filter-btn" data-shift="A">A</button>
+        <button class="shift-filter-btn" data-shift="B">B</button>
+        <button class="shift-filter-btn" data-shift="C">C</button>
+        <button class="shift-filter-btn" data-shift="D">D</button>
+      </div>
       <canvas id="metricsChart" style="max-width:100%;margin-bottom:24px;"></canvas>
       <div id="metricsTableWrapper"></div>
     </section>
@@ -78,43 +91,47 @@
 
     <!-- GUINDASTES -->
     <section class="card">
-      <h2 class="section-title">🏗️ Posicionamento dos Guindastes</h2>
+      <h2 class="section-title" id="title-guindastes">🏗️ Estatus dos Guindastes</h2>
       <div class="equip-list" id="list-guindastes"></div>
       <button class="btn btn-secondary" id="addGuindasteBtn">+ Adicionar Guindaste</button>
     </section>
 
     <!-- CARRETAS -->
     <section class="card">
-      <h2 class="section-title">🚛 Status das Carretas – Mina</h2>
+      <h2 class="section-title" id="title-carretas">🚛 Status das Carretas – Mina</h2>
       <div class="equip-list" id="list-carretas"></div>
       <button class="btn btn-secondary" id="addCarretaBtn">+ Adicionar Carreta</button>
     </section>
 
     <!-- CAMINHÕES -->
     <section class="card">
-      <h2 class="section-title">🚚 Status dos Caminhões – Mina / Turno</h2>
+      <h2 class="section-title" id="title-caminhoes">🚚 Status dos Caminhões – Mina / Turno</h2>
       <div class="equip-list" id="list-caminhoes"></div>
-      <button class="btn btn-secondary" id="addCaminhaoBtn">+ Adicionar Caminhão</button>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
+        <button class="btn btn-secondary" id="addCaminhaoBtn">+ Adicionar Caminhão</button>
+        <button class="btn btn-secondary" id="addAdm405Btn" style="display:none;">➕ 1JA405 - ADM</button>
+        <button class="btn btn-secondary" id="addAdm406Btn" style="display:none;">➕ 1JA406 - ADM</button>
+      </div>
     </section>
 
     <!-- GUINDAUTO -->
     <section class="card">
-      <h2 class="section-title">🔧 Guindauto Sky Munck</h2>
+      <h2 class="section-title" id="title-guindauto">🔧 Guindauto Sky Munck</h2>
       <div class="equip-list" id="list-guindauto"></div>
       <button class="btn btn-secondary" id="addGuindautoBtn">+ Adicionar Guindauto</button>
     </section>
 
     <!-- EMPILHADEIRAS -->
     <section class="card">
-      <h2 class="section-title">🏭 Status das Empilhadeiras</h2>
+      <h2 class="section-title" id="title-empilhadeiras">🏭 Status das Empilhadeiras</h2>
       <div class="equip-list" id="list-empilhadeiras"></div>
       <button class="btn btn-secondary" id="addEmpilhadeiraBtn">+ Adicionar Empilhadeira</button>
     </section>
 
     <!-- SALVAR NO FIREBASE -->
     <section class="card" style="text-align:center;">
-      <button id="saveFirebaseBtn" class="btn btn-primary" style="font-size:16px;padding:14px 32px;">☁️ Salvar no Firebase</button>
-      <p id="saveFirebaseStatus" style="margin-top:10px;font-size:13px;color:#6b7fa3;"></p>
+      <button id="saveFirebaseBtn" class="btn btn-primary" style="font-size:16px;padding:14px 32px;">☁️ Publicar para todos</button>
+      <p id="saveFirebaseStatus" style="margin-top:10px;font-size:13px;color:var(--muted);"></p>
     </section>
 
     <!-- LEGENDA -->
