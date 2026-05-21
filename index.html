@@ -18,11 +18,16 @@
 
   <header>
     <div class="header-inner">
-      <span class="logo">Status XCMG – Mina</span>
-      <span id="syncIndicator" style="margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;">
-        <span id="syncDot" style="width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;"></span>
-        <span id="syncLabel">Conectando...</span>
-      </span>
+      <span class="logo"><img src="icon-192.png" alt="XCMG" class="logo-img">XCMG</span>
+      <div class="header-actions">
+        <button id="themeToggleBtn" class="btn btn-secondary" title="Alternar tema" style="font-size:18px;padding:6px 10px;">☀️</button>
+        <button id="toggleHistoryBtn" class="btn btn-secondary">📚 Histórico</button>
+        <button id="toggleMetricsBtn" class="btn btn-secondary">📊 Métricas</button>
+        <span id="syncIndicator" style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+          <span id="syncDot" style="width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;"></span>
+          <span id="syncLabel">Conectando...</span>
+        </span>
+      </div>
     </div>
   </header>
 
@@ -31,17 +36,12 @@
     <section class="card" id="historySection" style="display:none;">
       <h2 class="section-title">Histórico de Relatórios</h2>
       <div style="margin-bottom: 12px;">
-        <button id="exportHistoryBtn" class="btn btn-secondary">⬇️ Exportar Histórico</button>
-        <label for="importHistoryInput" class="btn btn-secondary" style="cursor:pointer;">⬆️ Importar Histórico</label>
+        <button id="exportHistoryBtn" class="btn btn-secondary">&#x2193; Exportar Histórico</button>
+        <label for="importHistoryInput" class="btn btn-secondary" style="cursor:pointer;">&#x2191; Importar Histórico</label>
         <input type="file" id="importHistoryInput" accept="application/json" style="display:none;" />
       </div>
       <ul id="historyList" style="max-height:300px;overflow:auto;padding:0;list-style:none;"></ul>
     </section>
-    <div style="display:flex;gap:8px;position:fixed;top:16px;right:16px;z-index:1001;">
-      <button id="themeToggleBtn" class="btn btn-secondary" title="Alternar tema" style="font-size:18px;padding:8px 12px;">☀️</button>
-      <button id="toggleHistoryBtn" class="btn btn-secondary">📚 Histórico</button>
-      <button id="toggleMetricsBtn" class="btn btn-secondary">📊 Métricas</button>
-    </div>
     <!-- MÉTRICAS MENSAIS -->
     <section class="card" id="metricsSection" style="display:none;">
       <h2 class="section-title">📊 Métricas Mensais</h2>

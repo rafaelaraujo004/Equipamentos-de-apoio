@@ -191,6 +191,8 @@ const DEDICATED_SUPPORT_TEAMS = {
   '1JA537': 'SOTREQ',
   '1JA360': 'ELETRICA',
   '1JA410': 'PERFURAÇÃO',
+  '1JA405 - ADM': 'TRACKSHIFT',
+  '1JA406 - ADM': 'MATERIAIS PREVENTIVA',
 };
 const PENDING_EVENTS_KEY = 'pendingEquipmentEvents';
 const PENDING_HISTORY_KEY = 'pendingHistoryItems';
@@ -205,6 +207,7 @@ const SHARED_DOC = 'current_state/live';
 let _syncTimer = null;
 let _applyingRemoteUpdate = false;
 let _unsubscribeSharedState = null;
+let _pendingOwnEchos = 0; // Quantas confirmações de escrita própria ainda esperamos do Firebase
 
 function getFormFields() {
   return {
@@ -227,15 +230,17 @@ function applyFormFields(form) {
 function applySharedState(d) {
   if (!d) return;
   const KEYS = ['guindastes', 'carretas', 'caminhoes', 'guindauto', 'empilhadeiras'];
-  let anyEquip = false;
-  KEYS.forEach(k => {
-    if (Array.isArray(d[k]) && d[k].length > 0) { DATA[k] = d[k]; anyEquip = true; }
-  });
-  if (anyEquip) renderAll();
+  let needsRender = false;
+  // Aplica o formulário PRIMEIRO para que renderAll() use o turno/data corretos
   if (d.form) {
     applyFormFields(d.form);
-    renderAll(); // Reaplica classe adm-inactive com o turno atualizado
+    needsRender = true;
   }
+  // Aceita arrays vazios (ex: todos os equipamentos de uma categoria foram excluídos)
+  KEYS.forEach(k => {
+    if (Array.isArray(d[k])) { DATA[k] = d[k]; needsRender = true; }
+  });
+  if (needsRender) renderAll();
 }
 
 function setSyncStatus(state) {
@@ -266,6 +271,7 @@ function scheduleSharedStateSave() {
 async function pushSharedState() {
   if (!firebaseDb) { setSyncStatus('offline'); return; }
   try {
+    _pendingOwnEchos++; // marca que esperamos um echo de volta desta escrita
     await firebaseDb.doc(SHARED_DOC).set({
       guindastes:    DATA.guindastes,
       carretas:      DATA.carretas,
@@ -277,6 +283,7 @@ async function pushSharedState() {
     });
     setSyncStatus('synced');
   } catch (err) {
+    _pendingOwnEchos = Math.max(0, _pendingOwnEchos - 1); // desfaz o incremento em caso de erro
     console.error('Erro ao sincronizar com Firebase:', err);
     setSyncStatus('error');
   }
@@ -287,6 +294,12 @@ function subscribeSharedState() {
   _unsubscribeSharedState = firebaseDb.doc(SHARED_DOC).onSnapshot(snap => {
     // Ignora eventos de escrita local (otimista) para evitar loop
     if (!snap.exists || snap.metadata.hasPendingWrites) return;
+    // Ignora o echo confirmado da nossa própria escrita (evita renderAll() que destruiria selects abertos)
+    if (_pendingOwnEchos > 0) {
+      _pendingOwnEchos--;
+      setSyncStatus('synced');
+      return;
+    }
     _applyingRemoteUpdate = true;
     applySharedState(snap.data());
     _applyingRemoteUpdate = false;
@@ -509,7 +522,8 @@ function createTagField(equip, statusField = 'status') {
     input.value = nextTag;
     scheduleSave();
   });
-  updateTagEditState(input, equip[statusField] === E_RED);
+  // Estado inicial sempre bloqueado; setEditState/setEditStateGnd controla o readOnly via botão lápis
+  input.readOnly = true;
   return input;
 }
 
@@ -879,15 +893,6 @@ function renderRow(equip, type, onDelete) {
     let opBtn;
     let sigBtn;
 
-    const refreshVisualState = () => {
-      syncStatusButton(equipBtn, equip.status);
-      if (opBtn) syncStatusButton(opBtn, equip.operatorStatus);
-      if (sigBtn) syncStatusButton(sigBtn, equip.signalerStatus);
-      updateTagEditState(tagInput, equip.status === E_RED);
-      applyCardStatusClass(card, getEffectiveStatus(equip));
-      scheduleSave();
-    };
-
     let opSel;
     const equipBtn = makeStatusBtn(equip, 'status', (next, release) => {
       handleMainStatusChange(next, equip, () => opSel, refreshVisualState, release);
@@ -904,17 +909,52 @@ function renderRow(equip, type, onDelete) {
       if (old) card.replaceChild(createSupportTeamField(equip), old);
       scheduleSave();
     });
+
+    // Controle de modo edição (guindaste)
+    let isEditingGnd = false;
+    let editBtnGnd;
+    const setEditStateGnd = (edit) => {
+      // Status vermelho bloqueia edição
+      if (equip.status === E_RED) edit = false;
+      isEditingGnd = edit;
+      tagInput.readOnly = !edit;
+      tagInput.classList.toggle('editable', edit);
+      subInput.readOnly = !edit;
+      subInput.classList.toggle('editable', edit);
+      if (editBtnGnd) editBtnGnd.classList.toggle('active', edit);
+    };
+
+    const refreshVisualState = () => {
+      syncStatusButton(equipBtn, equip.status);
+      if (opBtn) syncStatusButton(opBtn, equip.operatorStatus);
+      if (sigBtn) syncStatusButton(sigBtn, equip.signalerStatus);
+      // Se ficou vermelho, desativa modo edição
+      setEditStateGnd(isEditingGnd);
+      applyCardStatusClass(card, getEffectiveStatus(equip));
+      scheduleSave();
+    };
+
     line1.appendChild(equipBtn);
     line1.appendChild(tagInput);
     line1.appendChild(subInput);
     if (onDelete) {
+      const rowActionsGnd = document.createElement('div');
+      rowActionsGnd.className = 'row-actions';
+      editBtnGnd = document.createElement('button');
+      editBtnGnd.type = 'button';
+      editBtnGnd.className = 'edit-btn';
+      editBtnGnd.title = 'Editar equipamento';
+      editBtnGnd.textContent = '✏️';
+      editBtnGnd.addEventListener('click', () => setEditStateGnd(!isEditingGnd));
+      rowActionsGnd.appendChild(editBtnGnd);
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'delete-btn';
       deleteBtn.title = 'Excluir equipamento';
       deleteBtn.textContent = '🗑';
       deleteBtn.addEventListener('click', onDelete);
-      line1.appendChild(deleteBtn);
+      rowActionsGnd.appendChild(deleteBtn);
+      line1.appendChild(rowActionsGnd);
     }
 
     const supportInput = createSupportTeamField(equip);
@@ -964,9 +1004,24 @@ function renderRow(equip, type, onDelete) {
   row.className = cls;
 
   const tagInput = createTagField(equip, 'status');
+
+  // Controle de modo edição (linha única)
+  let isEditing = false;
+  let editBtnRef;
+  const setEditState = (edit) => {
+    // Status vermelho bloqueia edição
+    if (equip.status === E_RED) edit = false;
+    isEditing = edit;
+    tagInput.readOnly = !edit;
+    tagInput.classList.toggle('editable', edit);
+    if (subInput) { subInput.readOnly = !edit; subInput.classList.toggle('editable', edit); }
+    if (editBtnRef) editBtnRef.classList.toggle('active', edit);
+  };
+
   const refreshVisualState = () => {
     syncStatusButton(btn, equip.status);
-    updateTagEditState(tagInput, equip.status === E_RED);
+    // Se ficou vermelho, desativa modo edição
+    setEditState(isEditing);
     applyCardStatusClass(row, getEffectiveStatus(equip));
     scheduleSave();
   };
@@ -983,6 +1038,7 @@ function renderRow(equip, type, onDelete) {
     opSel = buildSelect(OP_OPTIONS, equip.operator, v => {
       equip.operator = v;
       equip.status = getStatusFromOperator(v);
+      equip.operatorStatus = getStatusFromOperator(v);
       opNameRow._update();
       refreshVisualState();
     });
@@ -1009,13 +1065,25 @@ function renderRow(equip, type, onDelete) {
   row.appendChild(supportInput);
 
   if (onDelete) {
+    const rowActions = document.createElement('div');
+    rowActions.className = 'row-actions';
+    // Botão lápis
+    editBtnRef = document.createElement('button');
+    editBtnRef.type = 'button';
+    editBtnRef.className = 'edit-btn';
+    editBtnRef.title = 'Editar equipamento';
+    editBtnRef.textContent = '✏️';
+    editBtnRef.addEventListener('click', () => setEditState(!isEditing));
+    rowActions.appendChild(editBtnRef);
+    // Botão lixeira
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'delete-btn';
     deleteBtn.title = 'Excluir equipamento';
     deleteBtn.textContent = '🗑';
     deleteBtn.addEventListener('click', onDelete);
-    row.appendChild(deleteBtn);
+    rowActions.appendChild(deleteBtn);
+    row.appendChild(rowActions);
   }
 
   refreshVisualState();
@@ -1157,16 +1225,16 @@ function buildOperationalSummary() {
     const n1 = n => n > 1 ? 1 : 0;
 
     if (operational.length) {
-      lines.push(`${operational.length} ${labels.operational[n1(operational.length)]} ${formatTags(operational)}`);
+      lines.push(`${operational.length} *${labels.operational[n1(operational.length)]}* ${formatTags(operational)}`);
     }
     if (preventive.length) {
-      lines.push(`${preventive.length} ${labels.preventive[n1(preventive.length)]} ${formatTags(preventive)}`);
+      lines.push(`${preventive.length} *${labels.preventive[n1(preventive.length)]}* ${formatTags(preventive)}`);
     }
     if (corrective.length) {
-      lines.push(`${corrective.length} ${labels.corrective[n1(corrective.length)]} ${formatTags(corrective)}`);
+      lines.push(`${corrective.length} *${labels.corrective[n1(corrective.length)]}* ${formatTags(corrective)}`);
     }
     if (noOperator.length) {
-      lines.push(`${noOperator.length} ${noOperator.length > 1 ? 'operadores a menos de' : 'operador a menos de'} ${labels.noOperator[n1(noOperator.length)]} ${formatTags(noOperator)}`);
+      lines.push(`${noOperator.length} ${noOperator.length > 1 ? 'operadores a menos de' : 'operador a menos de'} *${labels.noOperator[n1(noOperator.length)]}* ${formatTags(noOperator)}`);
     }
   }
 
@@ -1189,39 +1257,39 @@ function buildReport() {
   let t = `*Status XCMG MINA ${date}*\n\nTURNO ${shift}\n\n${day}\n\n`;
 
   // Guindastes
-  t += `\n*Posicionamento dos Guindastes*\n`;
+  t += `\n*Status dos Guindastes*\n`;
   [...DATA.guindastes].sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''}\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''}\n`;
     if (e.supportTeam) t += `- APOIO ${e.supportTeam}\n`;
-    t += `${e.operatorStatus} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}\n`;
+    t += `${e.operatorStatus} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}\n`;
     t += `${e.signalerStatus} ${e.signaler}\n\n`;
   });
 
   // Carretas
   t += `*Status das Carretas – Mina*\n\n`;
   [...DATA.carretas].sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n\n`;
   });
 
   // Caminhões
-  t += `\n*Status dos Caminhões – Mina / Turno*\n`;
+  t += `*Status dos Caminhões – Mina / Turno*\n\n`;
   [...DATA.caminhoes].filter(e => !e.onlyShifts || e.onlyShifts.includes(shift)).sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n\n`;
   });
 
   // Guindauto
-  t += `\n*Guindauto Sky Munck*\n`;
+  t += `*Guindauto Sky Munck*\n\n`;
   [...DATA.guindauto].sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n\n`;
   });
 
   // Empilhadeiras
-  t += `\n*Status das Empilhadeiras*\n`;
+  t += `*Status das Empilhadeiras*\n\n`;
   [...DATA.empilhadeiras].sort(byStatus).forEach(e => {
-    t += `${e.status} ${e.tag}${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
   });
 
-  t += `\n*Legenda:*\n${E_GREEN} Com operador\n${E_YELLOW} Sem operador\n${E_RED} Manutenção Corretiva/preventiva`;
+  t += `\n*Legenda:*\n\n${E_GREEN} Com operador\n${E_YELLOW} Sem operador\n${E_RED} Manutenção Corretiva/preventiva`;
   t += `\n${buildOperationalSummary()}`;
 
   return t;
