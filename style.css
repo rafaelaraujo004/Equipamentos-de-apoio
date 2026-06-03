@@ -418,8 +418,8 @@ select:focus {
   min-width: 0;
   min-height: 54px;
   resize: vertical;
-  background: rgba(15, 23, 42, .92);
-  border: 1px solid rgba(148, 163, 184, .28);
+  background: var(--input-sub-bg);
+  border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
   padding: 10px 12px;
