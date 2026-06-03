@@ -1275,7 +1275,7 @@ function buildOperationalSummary() {
     lines.push('Nenhum equipamento registrado.');
   }
 
-  return `\n*Resumo Operacional*\n${lines.join('\n')}`;
+  return `\n*Resumo Operacional*\n\n${lines.join('\n\n')}`;
 }
 
 function buildReport() {
@@ -1290,7 +1290,7 @@ function buildReport() {
   let t = `*Status XCMG MINA ${date}*\n\nTURNO ${shift}\n\n${day}\n\n`;
 
   // Guindastes
-  t += `\n*Status dos Guindastes*\n`;
+  t += `\n*Status dos Guindastes*\n\n`;
   [...DATA.guindastes].sort(byStatus).forEach(e => {
     t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''}\n`;
     if (e.supportTeam) t += `- APOIO ${e.supportTeam}\n`;
@@ -1304,7 +1304,7 @@ function buildReport() {
   [...DATA.carretas].sort(byStatus).forEach(e => {
     t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`;
     t = appendObservationLine(t, e);
-    t += `\n`;
+    t += `\n\n`;
   });
 
   // Caminhões
@@ -1320,7 +1320,7 @@ function buildReport() {
   [...DATA.guindauto].sort(byStatus).forEach(e => {
     t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd();
     t = appendObservationLine(t, e);
-    t += `\n`;
+    t += `\n\n`;
   });
 
   // Empilhadeiras
@@ -1328,7 +1328,7 @@ function buildReport() {
   [...DATA.empilhadeiras].sort(byStatus).forEach(e => {
     t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`;
     t = appendObservationLine(t, e);
-    t += `\n`;
+    t += `\n\n`;
   });
 
   t += `\n*Legenda:*\n\n${E_GREEN} Com operador\n${E_YELLOW} Sem operador\n${E_RED} Manutenção Corretiva/preventiva`;
