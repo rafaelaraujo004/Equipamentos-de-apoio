@@ -1312,7 +1312,7 @@ function buildReport() {
   [...DATA.caminhoes].filter(e => !e.onlyShifts || e.onlyShifts.includes(shift)).sort(byStatus).forEach(e => {
     t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`;
     t = appendObservationLine(t, e);
-    t += `\n`;
+    t += `\n\n`;
   });
 
   // Guindauto
