@@ -64,34 +64,11 @@ async function renderMetrics(shiftFilter) {
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  let data = [];
-  if (!firebaseDb) {
-    data = getHistory().map(item => ({
-      date: new Date(item.date || item.dateLabel),
-      content: item.content
-    }));
-  } else {
-    try {
-      const snap = await firebaseDb.collection('relatorio_history')
-        .orderBy('savedAt', 'asc')
-        .get();
-      snap.forEach(doc => {
-        const d = doc.data();
-        if (d.content && d.savedAt && d.savedAt.toDate) {
-          const date = d.savedAt.toDate();
-          if (date >= firstDay && date <= lastDay) {
-            data.push({ date, content: d.content });
-          }
-        }
-      });
-    } catch (err) {
-      console.error('Erro ao carregar métricas do Firebase:', err);
-      data = getHistory().map(item => ({
-        date: new Date(item.date || item.dateLabel),
-        content: item.content
-      }));
-    }
-  }
+  const historyEntries = firebaseDb ? await fetchHistoryFromFirebase() : dedupeHistory(getHistory());
+  const data = historyEntries.map(item => ({
+    date: new Date(item.date || item.dateLabel),
+    content: item.content
+  })).filter(item => item.date >= firstDay && item.date <= lastDay);
   // Agrupar por dia – cada relatório fica na sua própria entrada (1 por turno)
   // Chave: dia + turno para manter separados
   const daily = {};
@@ -201,12 +178,15 @@ const DATA_STORAGE_KEY   = 'xcmgEquipmentData';
 let firebaseDb = null;
 let firebaseReady = false;
 let _saveTimer = null;
+let _historyCache = [];
+let _historyCleanupDone = false;
 
 // ── SINCRONIZAÇÃO EM TEMPO REAL ──────────────────────────────────────────────
 const SHARED_DOC = 'current_state/live';
 let _syncTimer = null;
 let _applyingRemoteUpdate = false;
 let _unsubscribeSharedState = null;
+let _unsubscribeHistoryState = null;
 let _pendingOwnEchos = 0; // Quantas confirmações de escrita própria ainda esperamos do Firebase
 
 function getFormFields() {
@@ -488,6 +468,14 @@ function normalizeTag(tag) {
   return String(tag || '').trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
+function normalizeObservationText(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const withoutParens = raw.replace(/^\(+|\)+$/g, '').trim();
+  const withoutPrefix = withoutParens.replace(/^OBS\s*:\s*/i, '').trim();
+  return `(OBS: ${withoutPrefix.toUpperCase()})`;
+}
+
 function isDuplicateTag(tag, currentEquip = null) {
   const normalized = normalizeTag(tag);
   if (!normalized) return false;
@@ -614,6 +602,35 @@ function createSupportTeamField(equip) {
   return wrapper;
 }
 
+function createObservationsField(equip) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'equip-observations-wrapper';
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'equip-observations-input';
+  textarea.rows = 2;
+  textarea.placeholder = '(OBS: PNEU FURADO)';
+  textarea.value = normalizeObservationText(equip.observations || '');
+
+  const syncObservation = () => {
+    const normalized = normalizeObservationText(textarea.value);
+    textarea.value = normalized;
+    equip.observations = normalized;
+    scheduleSave();
+  };
+
+  textarea.addEventListener('input', () => {
+    textarea.value = textarea.value.toUpperCase();
+    equip.observations = textarea.value;
+    scheduleSave();
+  });
+  textarea.addEventListener('blur', syncObservation);
+  textarea.addEventListener('change', syncObservation);
+
+  wrapper.appendChild(textarea);
+  return wrapper;
+}
+
 function getStatusFromOperator(value) {
   if (value === 'MANUTENÇÃO CORRETIVA' || value === 'MANUTENÇÃO PREVENTIVA') return E_RED;
   if (value === 'SEM OPERADOR' || value === 'SEM SINALEIRO') return E_YELLOW;
@@ -648,6 +665,10 @@ async function initFirebase() {
     flushPendingEvents();
     flushPendingHistoryItems();
     initSharedSync();
+    dedupeHistory(getHistory()).forEach(item => saveHistoryToFirebase(item));
+    await cleanupRemoteHistory();
+    syncHistoryFromFirebase();
+    subscribeHistoryState();
   } catch (err) {
     console.error('Falha ao inicializar Firebase:', err);
     firebaseDb = null;
@@ -703,6 +724,7 @@ function buildEventPayload(action, equipmentType, equip) {
     operator: equip.operator || '',
     sub: equip.sub || '',
     supportTeam: equip.supportTeam || '',
+    observations: equip.observations || '',
     clientCreatedAt: new Date().toISOString()
   };
 }
@@ -1064,6 +1086,11 @@ function renderRow(equip, type, onDelete) {
   const supportInput = createSupportTeamField(equip);
   row.appendChild(supportInput);
 
+  if (type === 'caminhoes') {
+    const observationsInput = createObservationsField(equip);
+    row.appendChild(observationsInput);
+  }
+
   if (onDelete) {
     const rowActions = document.createElement('div');
     rowActions.className = 'row-actions';
@@ -1274,7 +1301,8 @@ function buildReport() {
   // Caminhões
   t += `*Status dos Caminhões – Mina / Turno*\n\n`;
   [...DATA.caminhoes].filter(e => !e.onlyShifts || e.onlyShifts.includes(shift)).sort(byStatus).forEach(e => {
-    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n\n`;
+    const observations = normalizeObservationText(e.observations || '');
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}${observations ? ' - ' + observations : ''}\n\n`;
   });
 
   // Guindauto
@@ -1300,7 +1328,8 @@ function getHistory() {
   return JSON.parse(localStorage.getItem('relatorioHistory') || '[]');
 }
 function saveHistory(arr) {
-  localStorage.setItem('relatorioHistory', JSON.stringify(arr));
+  _historyCache = dedupeHistory(arr);
+  localStorage.setItem('relatorioHistory', JSON.stringify(_historyCache));
 }
 
 // Extrai a letra do turno do texto do relatório (linha "TURNO X")
@@ -1309,14 +1338,27 @@ function extractShiftFromReport(content) {
   return m ? m[1].toUpperCase() : null;
 }
 
+function historyItemKey(item) {
+  if (!item) return '';
+  return extractShiftFromReport(item.content) || item.shift || item.date || item.dateLabel || item.content || '';
+}
+
+function normalizeHistoryItem(item) {
+  if (!item || typeof item.content !== 'string' || !item.content.trim()) return null;
+  return {
+    dateLabel: item.dateLabel || item.clientCreatedAt || item.date || new Date().toLocaleString(),
+    date: item.date || item.clientCreatedAt || new Date().toISOString(),
+    content: item.content,
+  };
+}
+
 // Adiciona ou sobrescreve entrada do histórico (1 por turno)
 // overwrite=true substitui a entrada existente do mesmo turno
 function addToHistory(report, overwrite) {
-  const arr = getHistory();
   const shift = extractShiftFromReport(report);
-  const existingIdx = shift ? arr.findIndex(i => extractShiftFromReport(i.content) === shift) : -1;
+  const arr = dedupeHistory(getHistory()).filter(item => historyItemKey(item) !== shift);
 
-  if (existingIdx !== -1 && !overwrite) return; // já existe, não substituir sem confirmação
+  if (!shift && !overwrite) return;
 
   const item = {
     dateLabel: new Date().toLocaleString(),
@@ -1324,9 +1366,6 @@ function addToHistory(report, overwrite) {
     content: report
   };
 
-  if (existingIdx !== -1) {
-    arr.splice(existingIdx, 1); // remove a entrada antiga do mesmo turno
-  }
   arr.unshift(item);
   saveHistory(arr);
   saveHistoryToFirebase(item);
@@ -1334,9 +1373,8 @@ function addToHistory(report, overwrite) {
 
 // Gera um ID único baseado no conteúdo do relatório
 function reportDocId(item) {
-  // Usa a primeira linha do relatório (data/turno) como chave única
-  const key = (item.content || '').split('\n').find(l => l.trim()) || item.date;
-  return key.replace(/[^a-zA-Z0-9À-ÿ_\-]/g, '_').slice(0, 100);
+  const shift = extractShiftFromReport(item.content) || 'unknown';
+  return `turno_${shift}`;
 }
 
 // Salva um item de histórico no Firebase (sem duplicatas via ID)
@@ -1358,29 +1396,142 @@ async function saveHistoryToFirebase(item) {
   }
 }
 
+async function cleanupRemoteHistory() {
+  if (!firebaseDb || _historyCleanupDone) return;
+  _historyCleanupDone = true;
+
+  try {
+    const snap = await firebaseDb.collection('relatorio_history').get();
+    if (snap.empty) return;
+
+    const docsByShift = new Map();
+    snap.forEach(doc => {
+      const data = doc.data() || {};
+      const normalized = normalizeHistoryItem(data);
+      if (!normalized) return;
+
+      const shift = extractShiftFromReport(normalized.content);
+      if (!shift) return;
+
+      const savedAt = data.savedAt && data.savedAt.toDate ? data.savedAt.toDate().getTime() : 0;
+      const createdAt = data.clientCreatedAt ? new Date(data.clientCreatedAt).getTime() : 0;
+      const fallbackDate = normalized.date ? new Date(normalized.date).getTime() : 0;
+      const stamp = savedAt || createdAt || fallbackDate || 0;
+
+      const current = docsByShift.get(shift);
+      if (!current || stamp >= current.stamp) {
+        docsByShift.set(shift, { doc, data, normalized, stamp });
+      }
+    });
+
+    const writes = [];
+    const keepIds = new Set();
+
+    docsByShift.forEach(({ normalized, data }) => {
+      const shift = extractShiftFromReport(normalized.content);
+      const canonicalId = reportDocId(normalized);
+      keepIds.add(canonicalId);
+      writes.push(firebaseDb.collection('relatorio_history').doc(canonicalId).set({
+        ...normalized,
+        savedAt: data.savedAt || window.firebase.firestore.FieldValue.serverTimestamp(),
+        clientCreatedAt: data.clientCreatedAt || normalized.date,
+      }, { merge: true }));
+    });
+
+    snap.forEach(doc => {
+      if (!keepIds.has(doc.id)) {
+        writes.push(doc.ref.delete());
+      }
+    });
+
+    await Promise.all(writes);
+  } catch (err) {
+    console.error('Erro ao limpar históricos duplicados no Firebase:', err);
+  }
+}
+
+async function fetchHistoryFromFirebase() {
+  if (!firebaseDb) return dedupeHistory(getHistory());
+  try {
+    const snap = await firebaseDb.collection('relatorio_history')
+      .orderBy('savedAt', 'desc')
+      .get();
+    const remote = [];
+    snap.forEach(doc => {
+      const normalized = normalizeHistoryItem(doc.data() || {});
+      if (normalized) remote.push(normalized);
+    });
+    return dedupeHistory(remote);
+  } catch (err) {
+    console.error('Erro ao ler histórico do Firebase:', err);
+    return dedupeHistory(getHistory());
+  }
+}
+
+function subscribeHistoryState() {
+  if (!firebaseDb || _unsubscribeHistoryState) return;
+  _unsubscribeHistoryState = firebaseDb.collection('relatorio_history')
+    .orderBy('savedAt', 'desc')
+    .onSnapshot(snap => {
+      if (snap.metadata.hasPendingWrites) return;
+      const remote = [];
+      snap.forEach(doc => {
+        const normalized = normalizeHistoryItem(doc.data() || {});
+        if (normalized) remote.push(normalized);
+      });
+      _historyCache = dedupeHistory(remote);
+      localStorage.setItem('relatorioHistory', JSON.stringify(_historyCache));
+      renderHistory();
+    }, err => {
+      console.error('Erro no listener do histórico:', err);
+    });
+}
+
 function dedupeHistory(arr) {
   const seen = new Set();
   return arr.filter(item => {
     if (!item || typeof item.content !== 'string') return false;
-    if (seen.has(item.content)) return false;
-    seen.add(item.content);
+    const key = historyItemKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
-function renderHistory() {
+
+async function syncHistoryFromFirebase() {
+  if (!firebaseDb) return;
+  try {
+    const remote = await fetchHistoryFromFirebase();
+    if (!remote.length) return;
+    saveHistory(remote);
+    renderHistory();
+  } catch (err) {
+    console.error('Erro ao sincronizar históricos do Firebase:', err);
+  }
+}
+
+async function renderHistory() {
   const list = document.getElementById('historyList');
   if (!list) return;
-  const arr = getHistory();
+  if (firebaseDb) {
+    const remote = await fetchHistoryFromFirebase();
+    if (remote.length) {
+      _historyCache = remote;
+      localStorage.setItem('relatorioHistory', JSON.stringify(_historyCache));
+    }
+  }
+
+  const arr = dedupeHistory(_historyCache.length ? _historyCache : getHistory());
   list.innerHTML = '';
   if (arr.length === 0) {
-    list.innerHTML = '<li style="color:#888">Nenhum relatório salvo ainda.</li>';
+    list.innerHTML = '<li class="history-empty">Nenhum relatório salvo ainda.</li>';
     return;
   }
   arr.forEach((item, idx) => {
     const li = document.createElement('li');
-    li.style = 'border-bottom:1px solid #eee;padding:8px 0;';
+    li.className = 'history-item';
     const dateLabel = item.dateLabel || item.date || 'Data desconhecida';
-    li.innerHTML = `<b style='color:#222'>${dateLabel}</b><br><pre style='white-space:pre-wrap;font-size:13px;background:#fff;color:#222;padding:8px;border-radius:4px;border:1px solid #e0e0e0;'>${item.content.replace(/</g,'&lt;')}</pre>`;
+    li.innerHTML = `<div class="history-meta">${dateLabel}</div><pre class="history-content">${item.content.replace(/</g,'&lt;')}</pre>`;
     list.appendChild(li);
   });
 }
@@ -1413,7 +1564,7 @@ document.getElementById('addCarretaBtn').addEventListener('click', () => {
   renderAll();
 });
 document.getElementById('addCaminhaoBtn').addEventListener('click', () => {
-  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '', observations: '' };
   DATA.caminhoes.push(item);
   logEquipmentEvent('added', 'caminhoes', item);
   renderAll();
@@ -1427,7 +1578,7 @@ document.getElementById('addCaminhaoBtn').addEventListener('click', () => {
       window.alert(`A TAG ${tag} ja existe na lista.`);
       return;
     }
-    const item = { tag, status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+    const item = { tag, status: E_GREEN, operator: 'COM OPERADOR', sub: '', observations: '' };
     DATA.caminhoes.push(item);
     logEquipmentEvent('added', 'caminhoes', item);
     renderAll();
@@ -1452,9 +1603,7 @@ document.getElementById('generateBtn').addEventListener('click', () => {
   out.classList.remove('hidden');
   out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  const arr = getHistory();
   const shift = extractShiftFromReport(report);
-  const existing = shift ? arr.find(i => extractShiftFromReport(i.content) === shift) : null;
 
   const statusEl = document.getElementById('saveFirebaseStatus');
   function showStatus(color, msg) {
@@ -1464,22 +1613,8 @@ document.getElementById('generateBtn').addEventListener('click', () => {
     setTimeout(() => { statusEl.textContent = ''; }, 4000);
   }
 
-  if (existing && existing.content === report) {
-    showStatus('#eab308', '⚠️ Relatório idêntico ao do Turno ' + shift + ' já salvo. Nenhuma alteração.');
-  } else if (existing) {
-    const confirm = window.confirm(
-      `Já existe um relatório salvo para o Turno ${shift} (gerado em ${existing.dateLabel}).\n\nDeseja sobrescrever com o relatório atual?`
-    );
-    if (confirm) {
-      addToHistory(report, true);
-      showStatus('#22c55e', '✅ Relatório do Turno ' + shift + ' sobrescrito com sucesso.');
-    } else {
-      showStatus('#eab308', '⚠️ Relatório do Turno ' + shift + ' mantido sem alteração.');
-    }
-  } else {
-    addToHistory(report, false);
-    showStatus('#22c55e', '✅ Relatório do Turno ' + (shift || '?') + ' salvo no histórico.');
-  }
+  addToHistory(report, true);
+  showStatus('#22c55e', '✅ Relatório do Turno ' + (shift || '?') + ' salvo e sincronizado.');
 
   renderHistory();
 });
@@ -1520,7 +1655,7 @@ document.querySelectorAll('.shift-filter-btn').forEach(btn => {
 
 // Exportar histórico
 document.getElementById('exportHistoryBtn').addEventListener('click', () => {
-  const arr = getHistory();
+  const arr = dedupeHistory(getHistory());
   const blob = new Blob([JSON.stringify(arr, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1541,7 +1676,9 @@ document.getElementById('importHistoryInput').addEventListener('change', (e) => 
     try {
       const arr = JSON.parse(ev.target.result);
       if (Array.isArray(arr)) {
-        saveHistory(dedupeHistory(arr));
+        const normalized = dedupeHistory(arr);
+        saveHistory(normalized);
+        normalized.forEach(item => saveHistoryToFirebase(item));
         renderHistory();
         alert('Histórico importado com sucesso!');
       } else {
