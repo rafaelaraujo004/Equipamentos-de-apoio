@@ -609,7 +609,7 @@ function createObservationsField(equip) {
   const textarea = document.createElement('textarea');
   textarea.className = 'equip-observations-input';
   textarea.rows = 2;
-  textarea.placeholder = '(OBS: PNEU FURADO)';
+  textarea.placeholder = '(OBS:)';
   textarea.value = normalizeObservationText(equip.observations || '');
 
   const syncObservation = () => {
@@ -629,6 +629,11 @@ function createObservationsField(equip) {
 
   wrapper.appendChild(textarea);
   return wrapper;
+}
+
+function appendObservationLine(report, equip) {
+  const observation = normalizeObservationText(equip.observations || '');
+  return observation ? `${report}${observation}\n` : report;
 }
 
 function getStatusFromOperator(value) {
@@ -1011,8 +1016,11 @@ function renderRow(equip, type, onDelete) {
     line3.appendChild(sigBtn);
     line3.appendChild(sigSel);
 
+    const observationsInput = createObservationsField(equip);
+
     card.appendChild(line1);
     card.appendChild(supportInput);
+    card.appendChild(observationsInput);
     card.appendChild(line2);
     card.appendChild(line3);
     refreshVisualState();
@@ -1086,10 +1094,8 @@ function renderRow(equip, type, onDelete) {
   const supportInput = createSupportTeamField(equip);
   row.appendChild(supportInput);
 
-  if (type === 'caminhoes') {
-    const observationsInput = createObservationsField(equip);
-    row.appendChild(observationsInput);
-  }
+  const observationsInput = createObservationsField(equip);
+  row.appendChild(observationsInput);
 
   if (onDelete) {
     const rowActions = document.createElement('div');
@@ -1289,32 +1295,40 @@ function buildReport() {
     t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''}\n`;
     if (e.supportTeam) t += `- APOIO ${e.supportTeam}\n`;
     t += `${e.operatorStatus} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}\n`;
+    t = appendObservationLine(t, e);
     t += `${e.signalerStatus} ${e.signaler}\n\n`;
   });
 
   // Carretas
   t += `*Status das Carretas – Mina*\n\n`;
   [...DATA.carretas].sort(byStatus).forEach(e => {
-    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`;
+    t = appendObservationLine(t, e);
+    t += `\n`;
   });
 
   // Caminhões
   t += `*Status dos Caminhões – Mina / Turno*\n\n`;
   [...DATA.caminhoes].filter(e => !e.onlyShifts || e.onlyShifts.includes(shift)).sort(byStatus).forEach(e => {
-    const observations = normalizeObservationText(e.observations || '');
-    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}${observations ? ' - ' + observations : ''}\n\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`;
+    t = appendObservationLine(t, e);
+    t += `\n`;
   });
 
   // Guindauto
   t += `*Guindauto Sky Munck*\n\n`;
   [...DATA.guindauto].sort(byStatus).forEach(e => {
-    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd() + `\n\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${(e.operator || '')}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`.trimEnd();
+    t = appendObservationLine(t, e);
+    t += `\n`;
   });
 
   // Empilhadeiras
   t += `*Status das Empilhadeiras*\n\n`;
   [...DATA.empilhadeiras].sort(byStatus).forEach(e => {
-    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}\n`;
+    t += `${e.status} *${e.tag}*${e.sub ? ' SUB ' + E_RED + e.sub : ''} ${e.operator}${e.operatorName && ['COM OPERADOR', 'OPERA\u00c7\u00c3O VALE'].includes(e.operator) ? ' \u2013 ' + e.operatorName : ''}${e.supportTeam ? ' - APOIO ' + e.supportTeam : ''}`;
+    t = appendObservationLine(t, e);
+    t += `\n`;
   });
 
   t += `\n*Legenda:*\n\n${E_GREEN} Com operador\n${E_YELLOW} Sem operador\n${E_RED} Manutenção Corretiva/preventiva`;
@@ -1552,13 +1566,13 @@ function updateAdmButtons() {
 
 // Adicionar novos equipamentos
 document.getElementById('addGuindasteBtn').addEventListener('click', () => {
-  const item = { tag: '', status: E_GREEN, operatorStatus: E_GREEN, operator: 'COM OPERADOR', signalerStatus: E_GREEN, signaler: 'COM SINALEIRO', sub: '' };
+  const item = { tag: '', status: E_GREEN, operatorStatus: E_GREEN, operator: 'COM OPERADOR', signalerStatus: E_GREEN, signaler: 'COM SINALEIRO', sub: '', observations: '' };
   DATA.guindastes.push(item);
   logEquipmentEvent('added', 'guindastes', item);
   renderAll();
 });
 document.getElementById('addCarretaBtn').addEventListener('click', () => {
-  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '', observations: '' };
   DATA.carretas.push(item);
   logEquipmentEvent('added', 'carretas', item);
   renderAll();
@@ -1585,13 +1599,13 @@ document.getElementById('addCaminhaoBtn').addEventListener('click', () => {
   });
 });
 document.getElementById('addGuindautoBtn').addEventListener('click', () => {
-  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '', observations: '' };
   DATA.guindauto.push(item);
   logEquipmentEvent('added', 'guindauto', item);
   renderAll();
 });
 document.getElementById('addEmpilhadeiraBtn').addEventListener('click', () => {
-  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '' };
+  const item = { tag: '', status: E_GREEN, operator: 'COM OPERADOR', sub: '', observations: '' };
   DATA.empilhadeiras.push(item);
   logEquipmentEvent('added', 'empilhadeiras', item);
   renderAll();
