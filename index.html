@@ -2,164 +2,259 @@
 <html lang="pt-BR" data-theme="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="theme-color" content="#0b1120">
   <title>Status XCMG – Relatório Diário</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="style.css">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
 </head>
 <body>
-  <!-- Mensagem de instalação do app -->
-  <div id="installBanner" style="display:none; position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1761ab; color:white; padding:16px 24px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.2); z-index:1000;">
-    <span>Adicione este app à tela inicial para acesso rápido!</span>
-    <button id="installBtn" style="margin-left:16px; background:white; color:#1761ab; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; font-weight:bold;">Instalar</button>
-    <button id="closeInstallBanner" style="margin-left:8px; background:transparent; color:white; border:none; font-size:18px; cursor:pointer;">×</button>
-  </div>
-
-  <header>
-    <div class="header-inner">
-      <span class="logo"><img src="icon-192.png" alt="XCMG" class="logo-img">XCMG</span>
-      <div class="header-actions">
-        <button id="themeToggleBtn" class="btn btn-secondary" title="Alternar tema" style="font-size:18px;padding:6px 10px;">☀️</button>
-        <button id="toggleHistoryBtn" class="btn btn-secondary">📚 Histórico</button>
-        <button id="toggleMetricsBtn" class="btn btn-secondary">📊 Métricas</button>
-        <span id="syncIndicator" style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;">
-          <span id="syncDot" style="width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;"></span>
-          <span id="syncLabel">Conectando...</span>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="logo"><img src="icon-192.png" alt="" class="logo-img">Status XCMG</span>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-view="report" role="tab">📝 Relatório</button>
+        <button class="tab" data-view="history" role="tab">📚 Histórico</button>
+        <button class="tab" data-view="metrics" role="tab">📊 Métricas</button>
+      </nav>
+      <div class="topbar-right">
+        <span class="sync-pill" id="syncPill" data-help="sync" title="Status da sincronização (toque para ajuda)">
+          <span class="sync-dot"></span><span id="syncLabel">Conectando…</span>
         </span>
+        <button class="icon-btn" data-help="guia" title="Como usar o app">?</button>
+        <button id="themeToggleBtn" class="icon-btn" title="Alternar tema">☀️</button>
       </div>
     </div>
   </header>
 
   <main class="container">
-    <!-- HISTÓRICO DE RELATÓRIOS -->
-    <section class="card" id="historySection" style="display:none;">
-      <h2 class="section-title">Histórico de Relatórios</h2>
-      <div style="margin-bottom: 12px;">
-        <button id="exportHistoryBtn" class="btn btn-secondary">&#x2193; Exportar Histórico</button>
-        <label for="importHistoryInput" class="btn btn-secondary" style="cursor:pointer;">&#x2191; Importar Histórico</label>
-        <input type="file" id="importHistoryInput" accept="application/json" style="display:none;" />
-      </div>
-      <ul id="historyList" style="max-height:300px;overflow:auto;padding:0;list-style:none;"></ul>
-    </section>
-    <!-- MÉTRICAS MENSAIS -->
-    <section class="card" id="metricsSection" style="display:none;">
-      <h2 class="section-title">📊 Métricas Mensais</h2>
-      <div class="shift-filter-row">
-        <span class="shift-filter-label">Filtrar por turno:</span>
-        <button class="shift-filter-btn active" data-shift="all">Todos</button>
-        <button class="shift-filter-btn" data-shift="A">A</button>
-        <button class="shift-filter-btn" data-shift="B">B</button>
-        <button class="shift-filter-btn" data-shift="C">C</button>
-        <button class="shift-filter-btn" data-shift="D">D</button>
-      </div>
-      <canvas id="metricsChart" style="max-width:100%;margin-bottom:24px;"></canvas>
-      <div id="metricsTableWrapper"></div>
-    </section>
-
-    <!-- CABEÇALHO -->
-    <section class="card">
-      <h2 class="section-title">Cabeçalho do Relatório</h2>
-      <div class="grid-header">
-        <div class="field">
-          <label for="reportDate">Data</label>
-          <input type="date" id="reportDate">
+    <!-- ═════════════ RELATÓRIO ═════════════ -->
+    <div class="view" id="view-report">
+      <section class="card hero">
+        <div class="card-head">
+          <h2 class="section-title">Turno do relatório</h2>
+          <button class="info-btn" data-help="cabecalho" title="Ajuda">i</button>
         </div>
-        <div class="field">
-          <label for="shiftSelect">Turno</label>
-          <select id="shiftSelect">
-            <option value="A">A</option>
-            <option value="B" selected>B</option>
-            <option value="C">C</option>
-            <option value="D">D</option>
+        <div class="grid-header">
+          <div class="field">
+            <label for="reportDate">Data</label>
+            <input type="date" id="reportDate">
+          </div>
+          <div class="field">
+            <label for="shiftSelect">Turno</label>
+            <select id="shiftSelect">
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C" selected>C</option>
+              <option value="D">D</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="weekdaySelect">Dia da semana</label>
+            <select id="weekdaySelect">
+              <option>DOMINGO</option>
+              <option>SEGUNDA-FEIRA</option>
+              <option>TERÇA-FEIRA</option>
+              <option>QUARTA-FEIRA</option>
+              <option>QUINTA-FEIRA</option>
+              <option>SEXTA-FEIRA</option>
+              <option>SÁBADO</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="card-head sub">
+          <span class="sub-title">Visão geral</span>
+          <button class="info-btn" data-help="painel" title="Ajuda">i</button>
+        </div>
+        <div class="kpis" id="liveKpis"></div>
+        <div class="alert hidden" id="pendingAlert"></div>
+
+        <div class="card-head sub">
+          <span class="sub-title">Mostrar</span>
+          <button class="info-btn" data-help="filtro" title="Ajuda">i</button>
+        </div>
+        <div class="chips" id="reportFilterChips">
+          <button class="chip active" data-filter="all">Todos</button>
+          <button class="chip" data-filter="pending">⚠ Pendências</button>
+          <button class="chip" data-filter="maint">🔧 Manutenção</button>
+          <button class="chip" data-filter="noop">👤 Sem operador</button>
+        </div>
+      </section>
+
+      <section class="card equip-section" data-type="caminhoes">
+        <div class="section-head">
+          <h2 class="section-title">🚚 Caminhões<span class="hide-sm">– Mina / Turno</span> <span class="section-count" id="count-caminhoes"></span></h2>
+          <span class="section-stats" id="stats-caminhoes"></span>
+          <button class="info-btn" data-help="caminhoes" title="Ajuda">i</button>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <p class="adm-note hidden" id="admNote">🌙 Fim de semana, turno da noite: caminhões ADM ficam ocultos. Inclua manualmente se necessário.</p>
+          <div class="equip-list" id="list-caminhoes"></div>
+          <div class="add-row">
+            <button class="btn btn-ghost add-btn" data-add="caminhoes">+ Adicionar caminhão</button>
+            <button class="btn btn-ghost hidden" id="addAdm405Btn">+ 1JA405 - ADM</button>
+            <button class="btn btn-ghost hidden" id="addAdm406Btn">+ 1JA406 - ADM</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card equip-section" data-type="guindastes">
+        <div class="section-head">
+          <h2 class="section-title">🏗️ Guindastes <span class="section-count" id="count-guindastes"></span></h2>
+          <span class="section-stats" id="stats-guindastes"></span>
+          <button class="info-btn" data-help="guindastes" title="Ajuda">i</button>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="equip-list" id="list-guindastes"></div>
+          <div class="add-row"><button class="btn btn-ghost add-btn" data-add="guindastes">+ Adicionar guindaste</button></div>
+        </div>
+      </section>
+
+      <section class="card equip-section" data-type="empilhadeiras">
+        <div class="section-head">
+          <h2 class="section-title">🏭 Empilhadeiras <span class="section-count" id="count-empilhadeiras"></span></h2>
+          <span class="section-stats" id="stats-empilhadeiras"></span>
+          <button class="info-btn" data-help="empilhadeiras" title="Ajuda">i</button>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="equip-list" id="list-empilhadeiras"></div>
+          <div class="add-row"><button class="btn btn-ghost add-btn" data-add="empilhadeiras">+ Adicionar empilhadeira</button></div>
+        </div>
+      </section>
+
+      <section class="card equip-section" data-type="carretas">
+        <div class="section-head">
+          <h2 class="section-title">🚛 Carretas<span class="hide-sm">– Mina</span> <span class="section-count" id="count-carretas"></span></h2>
+          <span class="section-stats" id="stats-carretas"></span>
+          <button class="info-btn" data-help="carretas" title="Ajuda">i</button>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="equip-list" id="list-carretas"></div>
+          <div class="add-row"><button class="btn btn-ghost add-btn" data-add="carretas">+ Adicionar carreta</button></div>
+        </div>
+      </section>
+
+      <section class="card equip-section" data-type="guindauto">
+        <div class="section-head">
+          <h2 class="section-title">🔧 <span class="hide-sm">Guindauto</span>Sky Munck <span class="section-count" id="count-guindauto"></span></h2>
+          <span class="section-stats" id="stats-guindauto"></span>
+          <button class="info-btn" data-help="guindauto" title="Ajuda">i</button>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="section-body">
+          <div class="equip-list" id="list-guindauto"></div>
+          <div class="add-row"><button class="btn btn-ghost add-btn" data-add="guindauto">+ Adicionar guindauto</button></div>
+        </div>
+      </section>
+
+      <section class="card hidden" id="outputCard">
+        <div class="card-head">
+          <h2 class="section-title">📤 Texto do relatório</h2>
+          <button class="info-btn" data-help="envio" title="Ajuda">i</button>
+        </div>
+        <pre id="output" class="output"></pre>
+      </section>
+
+      <div class="action-bar">
+        <button id="pendingBtn" class="btn btn-warn hidden"></button>
+        <button class="info-btn" data-help="envio" title="Ajuda">i</button>
+        <span class="spacer"></span>
+        <button id="copyBtn" class="btn btn-secondary">📄 Copiar</button>
+        <button id="generateBtn" class="btn btn-primary">📋 Gerar<span class="hide-sm">e salvar</span></button>
+      </div>
+    </div>
+
+    <!-- ═════════════ HISTÓRICO ═════════════ -->
+    <div class="view hidden" id="view-history">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="section-title">📚 Histórico de relatórios</h2>
+          <button class="info-btn" data-help="historico" title="Ajuda">i</button>
+        </div>
+        <div class="filters">
+          <input type="search" id="historySearch" placeholder="🔎 Buscar TAG, operador, equipe…" autocomplete="off">
+          <select id="historyPeriod">
+            <option value="7">Últimos 7 dias</option>
+            <option value="30" selected>Últimos 30 dias</option>
+            <option value="90">Últimos 90 dias</option>
+            <option value="all">Tudo</option>
           </select>
+          <div class="chips" id="historyShiftChips">
+            <button class="chip active" data-shift="all">Todos</button>
+            <button class="chip" data-shift="A">A</button>
+            <button class="chip" data-shift="B">B</button>
+            <button class="chip" data-shift="C">C</button>
+            <button class="chip" data-shift="D">D</button>
+          </div>
         </div>
-        <div class="field">
-          <label for="weekdaySelect">Dia da Semana</label>
-          <select id="weekdaySelect">
-            <option value="DOMINGO" selected>DOMINGO</option>
-            <option value="SEGUNDA-FEIRA">SEGUNDA-FEIRA</option>
-            <option value="TERÇA-FEIRA">TERÇA-FEIRA</option>
-            <option value="QUARTA-FEIRA">QUARTA-FEIRA</option>
-            <option value="QUINTA-FEIRA">QUINTA-FEIRA</option>
-            <option value="SEXTA-FEIRA">SEXTA-FEIRA</option>
-            <option value="SÁBADO">SÁBADO</option>
-          </select>
+      </section>
+
+      <div id="historyInsights"></div>
+      <div id="historyTimeline"></div>
+      <div id="historyList" class="history-list"></div>
+
+      <section class="card subtle">
+        <div class="btn-row">
+          <button id="exportHistoryBtn" class="btn btn-secondary">↓ Exportar histórico</button>
+          <label for="importHistoryInput" class="btn btn-secondary">↑ Importar histórico</label>
+          <input type="file" id="importHistoryInput" accept="application/json" hidden>
+          <button class="info-btn" data-help="backup" title="Ajuda">i</button>
         </div>
-      </div>
-    </section>
+      </section>
+    </div>
 
-    <!-- GUINDASTES -->
-    <section class="card">
-      <h2 class="section-title" id="title-guindastes">🏗️ Estatus dos Guindastes</h2>
-      <div class="equip-list" id="list-guindastes"></div>
-      <button class="btn btn-secondary" id="addGuindasteBtn">+ Adicionar Guindaste</button>
-    </section>
-
-    <!-- CARRETAS -->
-    <section class="card">
-      <h2 class="section-title" id="title-carretas">🚛 Status das Carretas – Mina</h2>
-      <div class="equip-list" id="list-carretas"></div>
-      <button class="btn btn-secondary" id="addCarretaBtn">+ Adicionar Carreta</button>
-    </section>
-
-    <!-- CAMINHÕES -->
-    <section class="card">
-      <h2 class="section-title" id="title-caminhoes">🚚 Status dos Caminhões – Mina / Turno</h2>
-      <div class="equip-list" id="list-caminhoes"></div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
-        <button class="btn btn-secondary" id="addCaminhaoBtn">+ Adicionar Caminhão</button>
-        <button class="btn btn-secondary" id="addAdm405Btn" style="display:none;">➕ 1JA405 - ADM</button>
-        <button class="btn btn-secondary" id="addAdm406Btn" style="display:none;">➕ 1JA406 - ADM</button>
-      </div>
-    </section>
-
-    <!-- GUINDAUTO -->
-    <section class="card">
-      <h2 class="section-title" id="title-guindauto">🔧 Guindauto Sky Munck</h2>
-      <div class="equip-list" id="list-guindauto"></div>
-      <button class="btn btn-secondary" id="addGuindautoBtn">+ Adicionar Guindauto</button>
-    </section>
-
-    <!-- EMPILHADEIRAS -->
-    <section class="card">
-      <h2 class="section-title" id="title-empilhadeiras">🏭 Status das Empilhadeiras</h2>
-      <div class="equip-list" id="list-empilhadeiras"></div>
-      <button class="btn btn-secondary" id="addEmpilhadeiraBtn">+ Adicionar Empilhadeira</button>
-    </section>
-
-    <!-- SALVAR NO FIREBASE -->
-    <section class="card" style="text-align:center;">
-      <button id="saveFirebaseBtn" class="btn btn-primary" style="font-size:16px;padding:14px 32px;">☁️ Publicar para todos</button>
-      <p id="saveFirebaseStatus" style="margin-top:10px;font-size:13px;color:var(--muted);"></p>
-    </section>
-
-    <!-- LEGENDA -->
-    <section class="card legend-card">
-      <h2 class="section-title">Legenda</h2>
-      <div class="legend-list">
-        <span><span class="dot green"></span>Com Operador</span>
-        <span><span class="dot yellow"></span>Sem Operador</span>
-        <span><span class="dot red"></span>Manutenção Corretiva / Preventiva</span>
-      </div>
-    </section>
-
-    <!-- ENVIO -->
-    <section class="card">
-      <h2 class="section-title">Envio do Relatório</h2>
-      <div class="btn-row">
-        <button id="generateBtn" class="btn btn-primary">📋 Gerar Texto</button>
-        <button id="copyBtn"     class="btn btn-secondary">📄 Copiar</button>
-      </div>
-      <pre id="output" class="output hidden"></pre>
-    </section>
-
+    <!-- ═════════════ MÉTRICAS ═════════════ -->
+    <div class="view hidden" id="view-metrics">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="section-title">📊 Métricas mensais</h2>
+          <button class="info-btn" data-help="metricas" title="Ajuda">i</button>
+        </div>
+        <div class="filters">
+          <input type="month" id="metricsMonth">
+          <div class="chips" id="metricsShiftChips">
+            <button class="chip active" data-shift="all">Todos</button>
+            <button class="chip" data-shift="A">A</button>
+            <button class="chip" data-shift="B">B</button>
+            <button class="chip" data-shift="C">C</button>
+            <button class="chip" data-shift="D">D</button>
+          </div>
+        </div>
+        <div class="kpis" id="metricsKpis"></div>
+        <div class="chart-wrap"><canvas id="metricsChart"></canvas></div>
+        <div id="metricsTableWrapper" class="table-wrap"></div>
+      </section>
+    </div>
   </main>
+
+  <dialog id="helpDialog" class="help-dialog">
+    <div class="help-head">
+      <h3 id="helpTitle"></h3>
+      <button class="icon-btn sm" id="helpClose" title="Fechar">×</button>
+    </div>
+    <div id="helpBody" class="help-body"></div>
+  </dialog>
+
+  <div id="installBanner" class="install-banner hidden">
+    <span>Adicione o app à tela inicial para acesso rápido.</span>
+    <button id="installBtn" class="btn btn-primary btn-sm">Instalar</button>
+    <button id="closeInstallBanner" class="icon-btn" title="Fechar">×</button>
+  </div>
+  <div id="toast" class="toast"></div>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="firebase-config.js"></script>
   <script src="script.js"></script>
 </body>
