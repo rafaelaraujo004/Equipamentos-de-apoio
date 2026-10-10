@@ -491,6 +491,75 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .help-topic:hover { border-color: var(--accent); }
 .help-link { display: block; margin-top: 14px; border: 0; background: none; color: var(--accent-2); cursor: pointer; font-weight: 600; }
 
+/* ═══════════════ LOGIN ═══════════════ */
+body.locked > .topbar, body.locked > main, body.locked > .install-banner { display: none !important; }
+.login-screen {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px 16px;
+}
+.login-card {
+  width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 28px 24px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
+}
+.login-logo { width: 56px; height: 56px; border-radius: 14px; align-self: center; }
+.login-card h1 { text-align: center; font-size: 22px; margin-top: -4px; }
+.login-card > p.muted { text-align: center; font-size: 13px; margin-top: -10px; }
+.login-card .btn-primary { width: 100%; padding: 13px; font-size: 15px; }
+.login-card .btn-primary:disabled { opacity: .6; cursor: wait; }
+.check { display: flex; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 13px; cursor: pointer; }
+.check input { width: auto; }
+.login-msg { font-size: 13px; font-weight: 600; padding: 10px 12px; border-radius: 10px; }
+.login-msg.error {
+  color: var(--text); background: color-mix(in srgb, var(--red) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 50%, transparent);
+}
+.login-foot { font-size: 12px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* Menu do usuário */
+.user-menu { position: relative; }
+.user-menu summary { list-style: none; }
+.user-menu summary::-webkit-details-marker { display: none; }
+.user-menu .menu {
+  position: absolute; right: 0; top: calc(100% + 8px); min-width: 210px; z-index: 60;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 6px;
+  box-shadow: var(--shadow); display: flex; flex-direction: column;
+}
+.menu-head { display: flex; flex-direction: column; padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.user-menu .menu button {
+  border: 0; background: transparent; text-align: left; padding: 9px 10px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px;
+}
+.user-menu .menu button:hover { background: var(--surface); }
+
+/* Admin */
+.admin-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.admin-form-foot { grid-column: 1 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.input-row { display: flex; gap: 6px; }
+.input-row .icon-btn { height: auto; width: 44px; }
+.form-msg { color: var(--red); font-size: 13px; font-weight: 600; flex: 1; }
+.form-msg:empty { display: none; }
+.cred-card {
+  margin-top: 14px; padding: 12px; border-radius: 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
+  background: color-mix(in srgb, var(--green) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--green) 45%, transparent);
+}
+.cred-card pre { white-space: pre-wrap; font-size: 13px; font-family: ui-monospace, Consolas, monospace; }
+.users-list { display: flex; flex-direction: column; gap: 8px; }
+.user-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
+}
+.user-row.off { opacity: .6; }
+.user-avatar {
+  width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--accent), var(--green));
+}
+.user-info { flex: 1; min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
+.user-badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.user-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill.blue { --c: var(--blue); }
+.btn-row.end { justify-content: flex-end; margin-top: 6px; }
+.pwd-dialog .field { margin-bottom: 12px; }
+.pwd-dialog form { display: contents; }
+
 /* ═══════════════ MOBILE ═══════════════ */
 @media (max-width: 640px) {
   .topbar-inner { padding: 8px 12px; gap: 8px; }
@@ -522,4 +591,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   .hide-sm { display: none; }
   .help-topics { grid-template-columns: 1fr; }
   .state-pill { font-size: 10px; padding: 3px 7px; }
+  .admin-form { grid-template-columns: 1fr; }
+  .user-actions { width: 100%; }
+  .tab { font-size: 12px; }
 }

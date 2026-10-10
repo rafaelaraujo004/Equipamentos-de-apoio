@@ -12,7 +12,28 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
 </head>
-<body>
+<body class="locked">
+  <!-- ═════════════ LOGIN ═════════════ -->
+  <div id="loginScreen" class="login-screen">
+    <form id="loginForm" class="login-card" autocomplete="on">
+      <img src="icon-192.png" alt="" class="login-logo">
+      <h1>Status XCMG</h1>
+      <p class="muted">Relatório diário de equipamentos de apoio</p>
+      <div class="field">
+        <label for="loginUser">Usuário</label>
+        <input id="loginUser" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="ex: joao.silva">
+      </div>
+      <div class="field">
+        <label for="loginPass">Senha</label>
+        <input id="loginPass" name="password" type="password" autocomplete="current-password" placeholder="Sua senha">
+      </div>
+      <label class="check"><input type="checkbox" id="loginShowPass"> Mostrar senha</label>
+      <div id="loginError" class="login-msg hidden"></div>
+      <button id="loginBtn" class="btn btn-primary" type="submit">Entrar</button>
+      <p class="login-foot muted">Não tem acesso? Peça ao administrador. <button type="button" class="info-btn" data-help="login" title="Ajuda">i</button></p>
+    </form>
+  </div>
+
   <header class="topbar">
     <div class="topbar-inner">
       <span class="logo"><img src="icon-192.png" alt="" class="logo-img">Status XCMG</span>
@@ -20,6 +41,7 @@
         <button class="tab active" data-view="report" role="tab">📝 Relatório</button>
         <button class="tab" data-view="history" role="tab">📚 Histórico</button>
         <button class="tab" data-view="metrics" role="tab">📊 Métricas</button>
+        <button class="tab hidden" data-view="admin" role="tab">🛡️ Admin</button>
       </nav>
       <div class="topbar-right">
         <span class="sync-pill" id="syncPill" data-help="sync" title="Status da sincronização (toque para ajuda)">
@@ -27,6 +49,14 @@
         </span>
         <button class="icon-btn" data-help="guia" title="Como usar o app">?</button>
         <button id="themeToggleBtn" class="icon-btn" title="Alternar tema">☀️</button>
+        <details class="user-menu" id="userMenu">
+          <summary class="icon-btn" title="Minha conta">👤</summary>
+          <div class="menu">
+            <div class="menu-head"><b id="userMenuName"></b><span id="userMenuRole" class="muted small"></span></div>
+            <button type="button" id="changePwdBtn">🔐 Alterar senha</button>
+            <button type="button" id="logoutBtn">🚪 Sair</button>
+          </div>
+        </details>
       </div>
     </div>
   </header>
@@ -234,7 +264,79 @@
         <div id="metricsTableWrapper" class="table-wrap"></div>
       </section>
     </div>
+    <!-- ═════════════ ADMIN ═════════════ -->
+    <div class="view hidden" id="view-admin">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="section-title">➕ Novo usuário</h2>
+          <button class="info-btn" data-help="admin" title="Ajuda">i</button>
+        </div>
+        <form id="newUserForm" class="admin-form" autocomplete="off">
+          <div class="field">
+            <label for="newUserName">Nome</label>
+            <input id="newUserName" placeholder="ex: João da Silva">
+          </div>
+          <div class="field">
+            <label for="newUserLogin">Usuário (login)</label>
+            <input id="newUserLogin" autocapitalize="none" spellcheck="false" placeholder="ex: joao.silva">
+          </div>
+          <div class="field">
+            <label for="newUserPass">Senha provisória</label>
+            <div class="input-row">
+              <input id="newUserPass" autocomplete="new-password" spellcheck="false">
+              <button type="button" id="newUserGen" class="icon-btn" title="Gerar outra senha">🎲</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="newUserRole">Perfil</label>
+            <select id="newUserRole">
+              <option value="user">Usuário</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+          <div class="admin-form-foot">
+            <span id="newUserMsg" class="form-msg"></span>
+            <button id="newUserBtn" class="btn btn-primary" type="submit">+ Criar usuário</button>
+          </div>
+        </form>
+        <div id="newUserResult" class="hidden"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 class="section-title">👥 Usuários <span class="section-count" id="usersCount">0</span></h2>
+          <button class="info-btn" data-help="usuarios" title="Ajuda">i</button>
+        </div>
+        <div id="usersList" class="users-list"><p class="empty">Carregando…</p></div>
+      </section>
+    </div>
   </main>
+
+  <dialog id="pwdDialog" class="help-dialog pwd-dialog">
+    <form id="pwdForm">
+      <div class="help-head"><h3 id="pwdTitle">🔐 Alterar senha</h3></div>
+      <div class="help-body">
+        <p id="pwdIntro" class="muted"></p>
+        <div class="field" id="pwdCurrentField">
+          <label for="pwdCurrent">Senha atual</label>
+          <input id="pwdCurrent" type="password" autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label for="pwdNew">Nova senha (mínimo 6 caracteres)</label>
+          <input id="pwdNew" type="password" autocomplete="new-password" required minlength="6">
+        </div>
+        <div class="field">
+          <label for="pwdConfirm">Confirme a nova senha</label>
+          <input id="pwdConfirm" type="password" autocomplete="new-password" required minlength="6">
+        </div>
+        <p id="pwdMsg" class="form-msg"></p>
+        <div class="btn-row end">
+          <button type="button" id="pwdCancel" class="btn btn-secondary">Cancelar</button>
+          <button type="submit" id="pwdSave" class="btn btn-primary">Salvar nova senha</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="helpDialog" class="help-dialog">
     <div class="help-head">
@@ -257,5 +359,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="firebase-config.js"></script>
   <script src="script.js"></script>
+  <script src="auth.js"></script>
 </body>
 </html>

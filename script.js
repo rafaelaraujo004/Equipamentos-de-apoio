@@ -308,23 +308,28 @@ function hasFirebaseConfig(c) {
   return !!c && ['apiKey', 'authDomain', 'projectId', 'appId'].every(k => typeof c[k] === 'string' && c[k].trim());
 }
 
-async function initFirebase() {
-  const config = window.FIREBASE_CONFIG || window.firebaseConfig;
-  if (!window.firebase || !hasFirebaseConfig(config)) { setSyncStatus('offline'); return; }
+// Inicia a sincronização dos dados — chamado por auth.js depois do login
+async function startDataSync(db) {
+  firebaseDb = db;
   try {
-    const app = window.firebase.apps.length ? window.firebase.app() : window.firebase.initializeApp(config);
-    const auth = app.auth();
-    if (!auth.currentUser) await auth.signInAnonymously();
-    firebaseDb = app.firestore();
     await initSharedSync();
     subscribeHistory();
     flushPendingEvents();
     flushPendingHistory();
   } catch (err) {
-    console.error('Falha ao inicializar Firebase:', err);
-    firebaseDb = null;
+    console.error('Falha ao iniciar sincronização:', err);
     setSyncStatus(navigator.onLine ? 'error' : 'offline');
   }
+}
+
+// Para a sincronização — chamado no logout
+function stopDataSync() {
+  if (_unsubscribeShared) { _unsubscribeShared(); _unsubscribeShared = null; }
+  if (_unsubscribeHistory) { _unsubscribeHistory(); _unsubscribeHistory = null; }
+  clearTimeout(_syncTimer);
+  _localDirty = false;
+  firebaseDb = null;
+  setSyncStatus('offline');
 }
 
 function getFormFields() {
@@ -414,6 +419,7 @@ function logEquipmentEvent(action, type, e) {
   const payload = {
     action, equipmentType: type, tag: e.tag || '', maintenance: e.maintenance || '', operator: e.operator || '',
     sub: e.sub || '', supportTeam: e.supportTeam || '', observations: e.observations || '', clientCreatedAt: new Date().toISOString(),
+    user: window.CURRENT_USER?.username || '',
   };
   sendEvent(payload).then(ok => { if (!ok) writeJSON(PENDING_EVENTS_KEY, [...readJSON(PENDING_EVENTS_KEY, []), payload]); });
 }
@@ -961,6 +967,7 @@ function normalizeHistoryItem(raw) {
     weekday: raw.weekday || header.weekday || weekdayOf(reportDate),
     savedAt: savedAt || `${reportDate}T12:00:00.000Z`,
     content: raw.content,
+    savedBy: typeof raw.savedBy === 'string' ? raw.savedBy : '',
     snapshot: snapshot.map(s => ({ ...s, state: stateOf(s) })),
   };
 }
@@ -988,7 +995,7 @@ function toFirestoreHistory(item) {
   return {
     reportDate: item.reportDate, shift: item.shift, weekday: item.weekday, content: item.content,
     snapshot: item.snapshot.map(({ state, ...rest }) => rest),
-    savedAtISO: item.savedAt, clientCreatedAt: item.savedAt,
+    savedAtISO: item.savedAt, clientCreatedAt: item.savedAt, savedBy: item.savedBy || '',
     savedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
   };
 }
@@ -1038,6 +1045,7 @@ async function saveCurrentReport(content) {
   const item = normalizeHistoryItem({
     reportDate, shift, weekday: $('weekdaySelect').value, content,
     snapshot: snapshotCurrent(shift), savedAt: new Date().toISOString(),
+    savedBy: window.CURRENT_USER?.name || window.CURRENT_USER?.username || '',
   });
   HISTORY = mergeHistory([item], HISTORY);
   persistLocalHistory();
@@ -1168,7 +1176,7 @@ function renderHistory() {
     card.innerHTML = `
       <div class="hist-head">
         <span class="shift-badge">Turno ${escapeHtml(h.shift)}</span>
-        <span class="hist-saved">salvo ${escapeHtml(formatDateTime(h.savedAt))}</span>
+        <span class="hist-saved">salvo ${escapeHtml(formatDateTime(h.savedAt))}${h.savedBy ? ` por ${escapeHtml(h.savedBy)}` : ''}</span>
         <div class="hist-counts">
           ${pill('operando', `${c.operando} operando`)}
           ${c.semOperador ? pill('semOperador', `${c.semOperador} s/ operador`) : ''}
@@ -1370,9 +1378,10 @@ async function copyText(text) {
 
 function showView(view) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
-  ['report', 'history', 'metrics'].forEach(v => $(`view-${v}`).classList.toggle('hidden', v !== view));
+  ['report', 'history', 'metrics', 'admin'].forEach(v => $(`view-${v}`).classList.toggle('hidden', v !== view));
   if (view === 'history') renderHistory();
   if (view === 'metrics') renderMetrics();
+  if (view === 'admin') renderAdmin(); // auth.js
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1547,6 +1556,45 @@ const HELP = {
       <li><b>Importar</b> carrega um arquivo exportado e envia para todos os aparelhos. Relatórios da mesma data e turno não são duplicados.</li>
     </ul>`,
   },
+  login: {
+    title: '🔑 Entrar no app',
+    html: `<ul>
+      <li>Digite o <b>usuário</b> e a <b>senha</b> que o administrador passou para você.</li>
+      <li>No <b>primeiro acesso</b>, o app pede para você criar uma senha só sua.</li>
+      <li>Esqueceu a senha? Peça ao administrador uma <b>nova senha provisória</b>.</li>
+      <li>Depois de entrar, o aparelho continua conectado até você tocar em <b>👤 → Sair</b>.</li>
+    </ul>`,
+  },
+  senha: {
+    title: '🔐 Minha conta',
+    html: `<ul>
+      <li>Toque em <b>👤</b> no topo para ver quem está conectado.</li>
+      <li><b>Alterar senha:</b> informe a senha atual e a nova (mínimo de 6 caracteres).</li>
+      <li><b>Sair:</b> desconecta este aparelho. Use em celulares compartilhados.</li>
+      <li>Cada relatório salvo registra <b>quem gerou</b> (aparece no Histórico).</li>
+    </ul>`,
+  },
+  admin: {
+    title: '🛡️ Criar usuários',
+    html: `<ol>
+      <li>Preencha o <b>nome</b> e o <b>usuário</b> (login, sem espaços, ex.: <i>joao.silva</i>).</li>
+      <li>A <b>senha provisória</b> já vem gerada (🎲 gera outra). Você também pode digitar uma.</li>
+      <li>Escolha o <b>perfil</b>: <b>Usuário</b> usa o app; <b>Administrador</b> também gerencia usuários.</li>
+      <li>Toque em <b>Criar usuário</b> e use <b>📄 Copiar dados de acesso</b> para mandar pelo WhatsApp.</li>
+      <li>No primeiro acesso, a pessoa é obrigada a trocar a senha provisória.</li>
+    </ol>`,
+  },
+  usuarios: {
+    title: '👥 Gerenciar usuários',
+    html: `<ul>
+      <li><b>🔑 Nova senha:</b> define uma senha provisória (para quem esqueceu a senha).</li>
+      <li><b>⛔ Desativar:</b> bloqueia o acesso na hora, sem apagar o cadastro. <b>✅ Ativar</b> libera de novo.</li>
+      <li><b>⭐ Tornar admin / 👤 Tornar usuário:</b> muda o perfil.</li>
+      <li><b>🗑 Excluir:</b> remove o acesso definitivamente.</li>
+      <li>“<b>Aguardando 1º acesso</b>” indica que a pessoa ainda não trocou a senha provisória.</li>
+      <li>A conta <b>admin</b> principal não pode ser desativada nem excluída.</li>
+    </ul>`,
+  },
   metricas: {
     title: '📊 Métricas',
     html: `<ul>
@@ -1561,7 +1609,8 @@ function openHelp(key) {
   const dlg = $('helpDialog');
   if (key === 'guia') {
     $('helpTitle').textContent = '❓ Como usar o app';
-    const order = ['cabecalho', 'painel', 'filtro', 'equipamento', 'caminhoes', 'guindastes', 'empilhadeiras', 'envio', 'sync', 'historico', 'insights', 'timeline', 'backup', 'metricas'];
+    const order = ['login', 'senha', 'cabecalho', 'painel', 'filtro', 'equipamento', 'caminhoes', 'guindastes', 'empilhadeiras', 'envio', 'sync', 'historico', 'insights', 'timeline', 'backup', 'metricas'];
+    if (window.CURRENT_USER?.role === 'admin') order.push('admin', 'usuarios');
     $('helpBody').innerHTML = `<p class="muted">Toque em um tópico para ver os detalhes. Em todo o app, o botão <span class="info-btn inline">i</span> explica a parte em que está.</p>
       <div class="help-topics">${order.map(k => `<button class="help-topic" data-goto="${k}">${HELP[k].title}</button>`).join('')}</div>`;
   } else {
@@ -1681,12 +1730,16 @@ function setupEvents() {
   $('metricsMonth').addEventListener('change', ev => { metricsFilter.month = ev.target.value || todayISO().slice(0, 7); renderMetrics(); });
   setupChips('metricsShiftChips', s => { metricsFilter.shift = s; renderMetrics(); });
 
-  window.addEventListener('online', () => { setSyncStatus('connecting'); if (firebaseDb) { initSharedSync(); flushPendingEvents(); flushPendingHistory(); } else initFirebase(); });
+  window.addEventListener('online', () => {
+    if (!firebaseDb) return; // sem login: a sincronização começa ao entrar
+    setSyncStatus('connecting'); initSharedSync(); flushPendingEvents(); flushPendingHistory();
+  });
   window.addEventListener('offline', () => setSyncStatus('offline'));
 }
 
 // ── Inicialização ────────────────────────────────────────────────────────────
-(function init() {
+// Roda depois que todos os scripts (inclusive auth.js) foram carregados
+document.addEventListener('DOMContentLoaded', function init() {
   setupTheme();
   setupInstall();
   const today = todayISO();
@@ -1698,5 +1751,5 @@ function setupEvents() {
   try { localStorage.removeItem(LEGACY_HISTORY_KEY); } catch {} // migrado para o novo formato
   setupEvents();
   renderAll();
-  initFirebase();
-})();
+  initAuth(); // auth.js: login → startDataSync()
+});
