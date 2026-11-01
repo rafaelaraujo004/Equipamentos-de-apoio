@@ -40,11 +40,19 @@ service cloud.firestore {
     }
 
     // ── Dados do app (somente usuários ativos) ────────────────────────────
+    // Painel de cada usuário: só o próprio dono lê e grava
     match /current_state/{docId} {
-      allow read, write: if isActiveUser();
+      allow read, write: if isActiveUser() && docId == request.auth.uid;
+      // Painel único de antes: só leitura (ponto de partida no 1º acesso de cada usuário)
+      allow read: if isActiveUser() && docId == 'live';
     }
+    // Histórico: todos leem; cada um grava só os próprios relatórios (admin pode importar/ajustar)
     match /relatorio_history/{docId} {
-      allow read, write: if isActiveUser();
+      allow read: if isActiveUser();
+      allow create, update: if isAdmin()
+        || (isActiveUser() && request.resource.data.savedByUid == request.auth.uid
+            && (resource == null || resource.data.get('savedByUid', '') == request.auth.uid));
+      allow delete: if isAdmin();
     }
     match /equipment_snapshots/{docId} {
       allow read, write: if isActiveUser();

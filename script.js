@@ -51,7 +51,8 @@ const PENDING_EVENTS_KEY  = 'pendingEquipmentEvents';
 const PENDING_HISTORY_KEY = 'pendingHistoryV2';
 const THEME_KEY           = 'xcmg-theme';
 const HISTORY_COLLECTION  = 'relatorio_history';
-const SHARED_DOC          = 'current_state/live';
+// Painel único de antes (todos juntos) — hoje só serve de ponto de partida para cada usuário
+const LEGACY_SHARED_DOC   = 'current_state/live';
 const HISTORY_LIMIT       = 500;
 
 const CLIENT_ID = (() => {
@@ -268,8 +269,35 @@ function normalizeData(src) {
 
 let DATA = normalizeData(DEFAULT_DATA);
 
+// Cada usuário tem a sua cópia dos equipamentos (no aparelho e no Firebase)
+let DATA_KEY = DATA_STORAGE_KEY;
+function userDataKey(uid) { return `${DATA_STORAGE_KEY}_${uid}`; }
+function userStateDoc() { return `current_state/${window.CURRENT_USER?.uid}`; }
+
+// Chamado por auth.js ao entrar: carrega o painel do usuário salvo neste aparelho
+function loadUserData(uid) {
+  DATA_KEY = userDataKey(uid);
+  DATA = normalizeData(DEFAULT_DATA);
+  loadSavedData();
+  resetReportDate();
+  renderAll();
+}
+// Chamado ao sair: o próximo usuário não vê o painel de quem saiu
+function clearUserData() {
+  DATA_KEY = DATA_STORAGE_KEY;
+  DATA = normalizeData(DEFAULT_DATA);
+  $('output').textContent = '';
+  $('outputCard').classList.add('hidden');
+  renderAll();
+}
+function resetReportDate() {
+  const today = todayISO();
+  $('reportDate').value = today;
+  $('weekdaySelect').value = weekdayOf(today);
+}
+
 function loadSavedData() {
-  const saved = readJSON(DATA_STORAGE_KEY, null);
+  const saved = readJSON(DATA_KEY, null);
   if (saved && typeof saved === 'object' && TYPES.some(t => Array.isArray(saved[t]))) {
     const norm = normalizeData(saved);
     TYPES.forEach(t => { if (Array.isArray(saved[t])) DATA[t] = norm[t]; });
@@ -284,7 +312,7 @@ function cleanList(list) {
   });
 }
 function cleanData() { return Object.fromEntries(TYPES.map(t => [t, cleanList(DATA[t])])); }
-function saveDataLocal() { writeJSON(DATA_STORAGE_KEY, cleanData()); }
+function saveDataLocal() { writeJSON(DATA_KEY, cleanData()); }
 
 // ── Firebase ─────────────────────────────────────────────────────────────────
 let firebaseDb = null;
@@ -328,6 +356,7 @@ function stopDataSync() {
   if (_unsubscribeHistory) { _unsubscribeHistory(); _unsubscribeHistory = null; }
   clearTimeout(_syncTimer);
   _localDirty = false;
+  _pendingRemoteState = null;
   firebaseDb = null;
   setSyncStatus('offline');
 }
@@ -337,9 +366,12 @@ function getFormFields() {
 }
 function applyFormFields(f) {
   if (!f) return;
-  if (f.reportDate) $('reportDate').value = f.reportDate;
+  // Data salva de um dia anterior não substitui a de hoje (evita relatório com data velha)
+  if (f.reportDate && f.reportDate >= todayISO()) {
+    $('reportDate').value = f.reportDate;
+    if (f.weekdaySelect) $('weekdaySelect').value = f.weekdaySelect;
+  }
   if (f.shiftSelect) $('shiftSelect').value = f.shiftSelect;
-  if (f.weekdaySelect) $('weekdaySelect').value = f.weekdaySelect;
 }
 
 // Evita destruir o que o usuário está digitando: aplica estado remoto só fora de edição
@@ -375,13 +407,14 @@ function scheduleSharedSave() {
 
 async function pushSharedState() {
   clearTimeout(_syncTimer);
-  if (!firebaseDb) { _localDirty = false; setSyncStatus('offline'); return; }
+  if (!firebaseDb || !window.CURRENT_USER) { _localDirty = false; setSyncStatus('offline'); return; }
   const payload = {
     ...cleanData(), form: getFormFields(), writer: CLIENT_ID,
+    owner: window.CURRENT_USER.username || '',
     updatedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
   };
   try {
-    await firebaseDb.doc(SHARED_DOC).set(payload);
+    await firebaseDb.doc(userStateDoc()).set(payload);
     _localDirty = false;
     _pendingRemoteState = null;
     setSyncStatus('synced');
@@ -393,19 +426,27 @@ async function pushSharedState() {
 }
 
 async function initSharedSync() {
-  if (!firebaseDb) return;
+  if (!firebaseDb || !window.CURRENT_USER) return;
   setSyncStatus('connecting');
   try {
-    const snap = await firebaseDb.doc(SHARED_DOC).get();
+    const snap = await firebaseDb.doc(userStateDoc()).get();
     if (snap.exists) applySharedState(snap.data());
-    else await pushSharedState();
+    else {
+      // Primeiro acesso do usuário: começa a partir do painel de antes (compartilhado), se existir
+      if (!readJSON(DATA_KEY, null)) {
+        const legacy = await firebaseDb.doc(LEGACY_SHARED_DOC).get().catch(() => null);
+        if (legacy && legacy.exists) applySharedState(legacy.data());
+      }
+      await pushSharedState();
+    }
     setSyncStatus('synced');
   } catch (err) {
-    console.error('Erro ao carregar estado compartilhado:', err);
+    console.error('Erro ao carregar o painel do usuário:', err);
     setSyncStatus('error');
   }
   if (_unsubscribeShared) return;
-  _unsubscribeShared = firebaseDb.doc(SHARED_DOC).onSnapshot(snap => {
+  // Mantém sincronizado o mesmo usuário em vários aparelhos
+  _unsubscribeShared = firebaseDb.doc(userStateDoc()).onSnapshot(snap => {
     if (!snap.exists || snap.metadata.hasPendingWrites) return;
     const d = snap.data();
     if (d.writer === CLIENT_ID) { if (!_localDirty) setSyncStatus('synced'); return; } // eco da nossa escrita
@@ -578,8 +619,8 @@ function renderEquipCard(e, type) {
   }
 
   // ── Detalhes (substituição, apoio, observações)
+  // Equipe dedicada é só uma nota informativa: não preenche nem bloqueia o campo Apoio
   const dedicated = getDedicatedTeam(e);
-  if (!e.supportTeam && dedicated) e.supportTeam = dedicated;
   const summaryBits = [];
   if (e.sub) summaryBits.push(`↔ Sub ${e.sub}`);
   if (e.supportTeam) summaryBits.push(`Apoio ${e.supportTeam}`);
@@ -596,18 +637,8 @@ function renderEquipCard(e, type) {
     onchange: ev => { e.sub = ev.target.value.trim().toUpperCase(); commit({ rerender: true }); },
   });
   const supportInput = el('input', {
-    type: 'text', placeholder: 'Equipe que recebe apoio', value: e.supportTeam,
-    class: dedicated && e.supportTeam && e.supportTeam !== dedicated ? 'diverged' : '',
-    onchange: ev => {
-      const next = ev.target.value.trim().toUpperCase();
-      if (dedicated && next && next !== dedicated &&
-          !window.confirm(`O equipamento ${e.tag} é dedicado à equipe ${dedicated}.\n\nDeseja realmente destiná-lo para ${next}?`)) {
-        ev.target.value = e.supportTeam || dedicated;
-        return;
-      }
-      e.supportTeam = next;
-      commit({ rerender: true });
-    },
+    type: 'text', placeholder: 'Equipe que recebe apoio (opcional)', value: e.supportTeam,
+    onchange: ev => { e.supportTeam = ev.target.value.trim().toUpperCase(); commit({ rerender: true }); },
   });
   const obsInput = el('textarea', {
     rows: 2, placeholder: 'Observações', value: e.observations.replace(/^\(OBS:\s*|\)$/g, ''),
@@ -617,7 +648,7 @@ function renderEquipCard(e, type) {
     el('label', { class: 'mini-field' }, [el('span', { text: 'Substituição' }), subInput]),
     el('label', { class: 'mini-field' }, [
       el('span', { text: 'Apoio' }), supportInput,
-      dedicated ? el('small', { class: 'dedicated', text: `🔒 Dedicado: ${dedicated}` }) : null,
+      dedicated ? el('small', { class: 'dedicated', text: `ℹ️ Nota: costuma ser dedicado a ${dedicated}` }) : null,
     ]),
     el('label', { class: 'mini-field wide' }, [el('span', { text: 'Observações' }), obsInput]),
   ]));
@@ -884,12 +915,14 @@ function validateBeforeGenerate() {
 // ═══════════════════════════════════════════════════════════════════════════
 // HISTÓRICO
 // Cada item: { id, reportDate (YYYY-MM-DD), shift, weekday, savedAt (ISO), content, snapshot[] }
-// 1 relatório por data + turno. Gerar novamente substitui.
+//         savedBy (nome), savedByUid
+// Histórico compartilhado: 1 relatório por data + turno + usuário. Gerar novamente substitui.
 // ═══════════════════════════════════════════════════════════════════════════
 let HISTORY = [];
-const historyFilter = { query: '', period: '30', shift: 'all', expanded: new Set() };
+const historyFilter = { query: '', period: '30', shift: 'all', user: 'all', expanded: new Set() };
 
-function historyId(reportDate, shift) { return `${reportDate}_${shift}`; }
+// Relatórios antigos (antes dos usuários) não têm uid: data_turno
+function historyId(reportDate, shift, uid) { return uid ? `${reportDate}_${shift}_${uid}` : `${reportDate}_${shift}`; }
 
 // Lê o texto antigo do relatório e reconstrói os equipamentos (compatibilidade)
 function parseReportText(content) {
@@ -961,13 +994,15 @@ function normalizeHistoryItem(raw) {
   const shift = raw.shift || header.shift || '?';
   if (!reportDate) return null;
   const snapshot = Array.isArray(raw.snapshot) && raw.snapshot.length ? raw.snapshot : parseReportText(raw.content);
+  const savedByUid = typeof raw.savedByUid === 'string' ? raw.savedByUid : '';
   return {
-    id: historyId(reportDate, shift),
+    id: historyId(reportDate, shift, savedByUid),
     reportDate, shift,
     weekday: raw.weekday || header.weekday || weekdayOf(reportDate),
     savedAt: savedAt || `${reportDate}T12:00:00.000Z`,
     content: raw.content,
     savedBy: typeof raw.savedBy === 'string' ? raw.savedBy : '',
+    savedByUid,
     snapshot: snapshot.map(s => ({ ...s, state: stateOf(s) })),
   };
 }
@@ -995,7 +1030,8 @@ function toFirestoreHistory(item) {
   return {
     reportDate: item.reportDate, shift: item.shift, weekday: item.weekday, content: item.content,
     snapshot: item.snapshot.map(({ state, ...rest }) => rest),
-    savedAtISO: item.savedAt, clientCreatedAt: item.savedAt, savedBy: item.savedBy || '',
+    savedAtISO: item.savedAt, clientCreatedAt: item.savedAt,
+    savedBy: item.savedBy || '', savedByUid: item.savedByUid || '',
     savedAt: window.firebase.firestore.FieldValue.serverTimestamp(),
   };
 }
@@ -1046,6 +1082,7 @@ async function saveCurrentReport(content) {
     reportDate, shift, weekday: $('weekdaySelect').value, content,
     snapshot: snapshotCurrent(shift), savedAt: new Date().toISOString(),
     savedBy: window.CURRENT_USER?.name || window.CURRENT_USER?.username || '',
+    savedByUid: window.CURRENT_USER?.uid || '',
   });
   HISTORY = mergeHistory([item], HISTORY);
   persistLocalHistory();
@@ -1066,11 +1103,41 @@ function filteredHistory() {
     const d = new Date(); d.setDate(d.getDate() - Number(historyFilter.period));
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   })();
+  const me = window.CURRENT_USER?.uid;
   return HISTORY.filter(h =>
     (historyFilter.shift === 'all' || h.shift === historyFilter.shift) &&
+    (historyFilter.user === 'all' || (historyFilter.user === 'me' ? h.savedByUid === me : historyUserKey(h) === historyFilter.user)) &&
     (!minDate || h.reportDate >= minDate) &&
     (!q || h.content.toUpperCase().includes(q))
   );
+}
+
+// Identifica o autor de um relatório (relatórios antigos não têm autor)
+function historyUserKey(h) { return h.savedByUid || (h.savedBy ? `name:${h.savedBy}` : 'legacy'); }
+
+// Relatório anterior do MESMO usuário (cada um tem o seu painel); antigos comparam com o anterior qualquer
+function previousReport(h) {
+  const i = HISTORY.indexOf(h);
+  const key = historyUserKey(h);
+  if (key === 'legacy') return HISTORY[i + 1];
+  return HISTORY.slice(i + 1).find(x => historyUserKey(x) === key);
+}
+
+// Preenche o filtro "Quem fez" com os autores presentes no histórico
+function updateHistoryUserOptions() {
+  const sel = $('historyUser');
+  if (!sel) return;
+  const authors = new Map();
+  HISTORY.forEach(h => {
+    const key = historyUserKey(h);
+    if (key !== 'legacy' && !authors.has(key)) authors.set(key, h.savedBy || 'Sem nome');
+  });
+  const current = historyFilter.user;
+  sel.innerHTML = '<option value="all">Todos os usuários</option><option value="me">Só os meus</option>'
+    + [...authors].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'))
+      .map(([key, name]) => `<option value="${escapeHtml(key)}">${escapeHtml(name)}</option>`).join('');
+  sel.value = [...sel.options].some(o => o.value === current) ? current : 'all';
+  historyFilter.user = sel.value;
 }
 
 function stateMap(item) {
@@ -1144,6 +1211,7 @@ function pill(state, text) { return `<span class="pill ${STATE_CLASS[state]}">${
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 function renderHistory() {
+  updateHistoryUserOptions();
   const items = filteredHistory();
   renderInsights(items);
   renderTagTimeline(items);
@@ -1161,8 +1229,8 @@ function renderHistory() {
       lastDate = h.reportDate;
       list.appendChild(el('div', { class: 'day-sep', text: `${isoToBR(h.reportDate)} · ${h.weekday}` }));
     }
-    // Relatório anterior cronologicamente (no histórico completo, não só filtrado)
-    const prev = HISTORY[HISTORY.indexOf(h) + 1];
+    // Relatório anterior do mesmo usuário (no histórico completo, não só filtrado)
+    const prev = previousReport(h);
     const allChanges = diffReports(h, prev);
     const changes = allChanges.filter(ch => ch.from !== 'ausente' && ch.to !== 'ausente');
     const added = allChanges.filter(ch => ch.from === 'ausente').map(ch => ch.tag);
@@ -1176,7 +1244,8 @@ function renderHistory() {
     card.innerHTML = `
       <div class="hist-head">
         <span class="shift-badge">Turno ${escapeHtml(h.shift)}</span>
-        <span class="hist-saved">salvo ${escapeHtml(formatDateTime(h.savedAt))}${h.savedBy ? ` por ${escapeHtml(h.savedBy)}` : ''}</span>
+        <span class="author-badge${h.savedByUid && h.savedByUid === window.CURRENT_USER?.uid ? ' mine' : ''}">👤 ${escapeHtml(h.savedBy || 'Autor não registrado')}</span>
+        <span class="hist-saved">salvo ${escapeHtml(formatDateTime(h.savedAt))}</span>
         <div class="hist-counts">
           ${pill('operando', `${c.operando} operando`)}
           ${c.semOperador ? pill('semOperador', `${c.semOperador} s/ operador`) : ''}
@@ -1186,8 +1255,8 @@ function renderHistory() {
       </div>
       <div class="hist-changes">
         ${!prev ? '<span class="muted">Primeiro relatório registrado.</span>'
-          : !allChanges.length ? `<span class="muted">Sem mudanças desde o turno ${escapeHtml(prev.shift)} de ${escapeHtml(isoToBR(prev.reportDate))}.</span>`
-          : `<span class="muted">Mudanças desde o turno ${escapeHtml(prev.shift)} de ${escapeHtml(isoToBR(prev.reportDate))}:</span>
+          : !allChanges.length ? `<span class="muted">Sem mudanças desde o relatório anterior (turno ${escapeHtml(prev.shift)} de ${escapeHtml(isoToBR(prev.reportDate))}).</span>`
+          : `<span class="muted">Mudanças desde o relatório anterior (turno ${escapeHtml(prev.shift)} de ${escapeHtml(isoToBR(prev.reportDate))}):</span>
              <ul>${changes.map(ch => `<li><b>${escapeHtml(ch.tag)}</b> ${pill(ch.from)} → ${pill(ch.to)}${ch.note ? ` <span class="muted">(${escapeHtml(ch.note)})</span>` : ''}</li>`).join('')}${extra}</ul>`}
       </div>`;
     const actions = el('div', { class: 'hist-actions' }, [
@@ -1298,7 +1367,7 @@ function renderMetrics() {
   const rows = HISTORY
     .filter(h => h.reportDate.startsWith(metricsFilter.month))
     .filter(h => metricsFilter.shift === 'all' || h.shift === metricsFilter.shift)
-    .map(h => ({ day: h.reportDate, shift: h.shift, ...countStates(h.snapshot) }))
+    .map(h => ({ day: h.reportDate, shift: h.shift, by: h.savedBy || '', ...countStates(h.snapshot) }))
     .sort((a, b) => a.day !== b.day ? (a.day < b.day ? -1 : 1) : a.shift.localeCompare(b.shift));
 
   const chartEl = $('metricsChart');
@@ -1332,7 +1401,7 @@ function renderMetrics() {
     metricsChart = new Chart(chartEl, {
       type: 'bar',
       data: {
-        labels: rows.map(r => `${r.day.slice(8, 10)}/${r.day.slice(5, 7)}${metricsFilter.shift === 'all' ? ` ${r.shift}` : ''}`),
+        labels: rows.map(r => `${r.day.slice(8, 10)}/${r.day.slice(5, 7)}${metricsFilter.shift === 'all' ? ` ${r.shift}` : ''}${r.by ? ` · ${r.by.split(' ')[0]}` : ''}`),
         datasets: [
           { label: 'Operando',     data: rows.map(r => r.operando),    backgroundColor: cssVar('--green') },
           { label: 'Sem operador', data: rows.map(r => r.semOperador), backgroundColor: cssVar('--yellow') },
@@ -1353,9 +1422,9 @@ function renderMetrics() {
   }
 
   tableWrapper.innerHTML = `<table class="metrics-table"><thead><tr>
-      <th>Data</th><th>Turno</th><th>Operando</th><th>S/ operador</th><th>Preventiva</th><th>Corretiva</th><th>Disp.</th>
+      <th>Data</th><th>Turno</th><th>Por</th><th>Operando</th><th>S/ operador</th><th>Preventiva</th><th>Corretiva</th><th>Disp.</th>
     </tr></thead><tbody>${rows.map(r => `<tr>
-      <td>${isoToBR(r.day)}</td><td>${r.shift}</td><td>${r.operando}</td><td>${r.semOperador}</td>
+      <td>${isoToBR(r.day)}</td><td>${r.shift}</td><td>${escapeHtml(r.by || '–')}</td><td>${r.operando}</td><td>${r.semOperador}</td>
       <td>${r.preventiva}</td><td>${r.corretiva}</td>
       <td>${r.total ? Math.round(((r.total - r.preventiva - r.corretiva) / r.total) * 100) : 0}%</td>
     </tr>`).join('')}</tbody></table>`;
@@ -1437,7 +1506,7 @@ const HELP = {
       <li><b>Data:</b> dia a que o relatório se refere. O <b>dia da semana</b> é preenchido sozinho ao mudar a data.</li>
       <li><b>Turno:</b> A, B, C ou D.</li>
       <li>Caminhões <b>ADM</b> (1JA405 e 1JA406): de <b>segunda a sexta</b> entram automaticamente no relatório. No <b>sábado e domingo</b>, nos turnos da noite (<b>B e D</b>), ficam ocultos e só entram se forem incluídos manualmente.</li>
-      <li>Essas informações são <b>compartilhadas</b>: quem abrir o app em outro aparelho vê a mesma data e turno.</li>
+      <li>Cada usuário tem o <b>seu próprio painel</b>: o que você altera (situação, operador, apoio, observações, data e turno) não aparece para os outros. Se você entrar em outro aparelho, vê o seu painel lá também.</li>
     </ul>`,
   },
   painel: {
@@ -1466,7 +1535,7 @@ const HELP = {
       <li><b>Detalhes</b> (toque para abrir):
         <ul>
           <li><b>Substituição:</b> TAG do equipamento que este está substituindo.</li>
-          <li><b>Apoio:</b> equipe atendida. Equipamentos dedicados mostram 🔒 e pedem confirmação para trocar.</li>
+          <li><b>Apoio:</b> equipe atendida (opcional). Equipamentos dedicados mostram uma <b>nota ℹ️</b> com a equipe de costume, apenas como lembrete.</li>
           <li><b>Observações:</b> saem no relatório como “(OBS: …)”.</li>
         </ul>
       </li>
@@ -1486,7 +1555,7 @@ const HELP = {
           <li>Para retirar um ADM incluído manualmente, toque na etiqueta <b>Manual ✕</b> do card (o equipamento não é excluído).</li>
         </ul>
       </li>
-      <li>Equipe dedicada (🔒) vem preenchida; trocar pede confirmação e fica destacado em laranja.</li>
+      <li>A equipe dedicada aparece como <b>nota ℹ️</b> em “Detalhes”. O campo Apoio é livre: preencha só se quiser que saia no relatório.</li>
     </ul>`,
     more: 'equipamento',
   },
@@ -1512,7 +1581,7 @@ const HELP = {
     title: '📤 Gerar e enviar o relatório',
     html: `<ol>
       <li>Se aparecer <b>⚠ pendências</b>, toque nele para ir direto ao equipamento que falta preencher.</li>
-      <li><b>📋 Gerar e salvar:</b> monta o texto e grava no <b>Histórico</b> (1 por data + turno; gerar de novo atualiza o do mesmo turno).</li>
+      <li><b>📋 Gerar e salvar:</b> monta o texto e grava no <b>Histórico</b> (1 por data + turno para cada usuário; gerar de novo atualiza o seu relatório daquele turno). O histórico é visto por todos, com a letra do turno e quem fez.</li>
       <li><b>📄 Copiar:</b> copia o texto para colar no WhatsApp.</li>
       <li>Ordem do relatório: <b>Caminhões → Guindastes → Empilhadeiras → Carretas → Sky Munck</b>, seguido da legenda e do <b>Resumo Operacional</b>.</li>
       <li>No resumo, equipamentos em manutenção sem operador aparecem como “SEM OPERADOR”, e a falta de operador mostra se o equipamento está em manutenção.</li>
@@ -1521,7 +1590,7 @@ const HELP = {
   sync: {
     title: '☁️ Sincronização',
     html: `<ul>
-      <li><b>Sincronizado:</b> todos os aparelhos veem as mesmas informações.</li>
+      <li><b>Sincronizado:</b> seu painel está salvo na nuvem (e igual em todos os aparelhos em que você entrar).</li>
       <li><b>Salvando…:</b> enviando sua última alteração.</li>
       <li><b>Offline:</b> sem internet. O que você fizer fica salvo no aparelho e é enviado quando a conexão voltar.</li>
     </ul>`,
@@ -1529,7 +1598,9 @@ const HELP = {
   historico: {
     title: '📚 Histórico',
     html: `<ul>
-      <li>Cada relatório gerado fica salvo por <b>data e turno</b>.</li>
+      <li>O histórico é <b>o mesmo para todos</b>. Cada relatório mostra a <b>letra do turno</b> e <b>👤 quem fez</b> (os seus ficam destacados em verde).</li>
+      <li><b>Quem fez:</b> filtre por usuário ou escolha “Só os meus”.</li>
+      <li>As mudanças de cada relatório são comparadas com o relatório anterior <b>da mesma pessoa</b>.</li>
       <li><b>Busca:</b> digite uma TAG (ex.: 1JA377), nome de operador ou equipe.</li>
       <li><b>Período</b> e <b>turno</b> filtram a lista e a análise.</li>
       <li>Cada relatório mostra as <b>mudanças em relação ao relatório anterior</b> (ex.: Operando → Corretiva).</li>
@@ -1553,7 +1624,7 @@ const HELP = {
     title: '💾 Exportar / Importar',
     html: `<ul>
       <li><b>Exportar</b> baixa uma cópia de todo o histórico (arquivo .json).</li>
-      <li><b>Importar</b> carrega um arquivo exportado e envia para todos os aparelhos. Relatórios da mesma data e turno não são duplicados.</li>
+      <li><b>Importar</b> carrega um arquivo exportado e envia para todos os aparelhos. Relatórios repetidos (mesma data, turno e autor) não são duplicados.</li>
     </ul>`,
   },
   login: {
@@ -1693,6 +1764,7 @@ function setupEvents() {
     searchTimer = setTimeout(() => { historyFilter.query = ev.target.value; renderHistory(); }, 200);
   });
   $('historyPeriod').addEventListener('change', ev => { historyFilter.period = ev.target.value; renderHistory(); });
+  $('historyUser').addEventListener('change', ev => { historyFilter.user = ev.target.value; renderHistory(); });
   setupChips('historyShiftChips', s => { historyFilter.shift = s; renderHistory(); });
 
   $('exportHistoryBtn').addEventListener('click', () => {
@@ -1745,8 +1817,7 @@ document.addEventListener('DOMContentLoaded', function init() {
   const today = todayISO();
   $('reportDate').value = today;
   $('weekdaySelect').value = weekdayOf(today);
-  loadSavedData();
-  loadLocalHistory();
+  loadLocalHistory(); // o painel de equipamentos é carregado no login (loadUserData)
   persistLocalHistory();
   try { localStorage.removeItem(LEGACY_HISTORY_KEY); } catch {} // migrado para o novo formato
   setupEvents();

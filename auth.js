@@ -150,7 +150,9 @@ async function createAdminProfile(user) {
 }
 
 function applySession(s) {
+  const changedUser = window.CURRENT_USER?.uid !== s.uid;
   window.CURRENT_USER = s;
+  if (changedUser) loadUserData(s.uid); // cada usuário tem o próprio painel
   $('userMenuName').textContent = s.name;
   $('userMenuRole').textContent = s.role === 'admin' ? 'Administrador' : `@${s.username}`;
   document.body.classList.toggle('is-admin', s.role === 'admin');
@@ -163,6 +165,7 @@ function endSession() {
   if (_unsubscribeUsers) { _unsubscribeUsers(); _unsubscribeUsers = null; }
   USERS = [];
   window.CURRENT_USER = null;
+  clearUserData();
   // Não deixa dados de acesso (senha provisória) visíveis para o próximo a entrar
   $('newUserForm').reset();
   $('newUserPass').value = generatePassword();
